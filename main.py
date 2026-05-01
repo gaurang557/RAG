@@ -2,13 +2,15 @@ from langchain_community.document_loaders import PyPDFLoader, UnstructuredPDFLoa
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
-import ask, llm
+from ask import ask_question
 
-loader = PyPDFLoader("annualreport-2025.pdf")
+
+
+loader = PyPDFLoader("annualreport-page2-2025.pdf")
 documents = loader.load()
 
 text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=500,
+    chunk_size=200,
     chunk_overlap=50
 )
 
@@ -24,9 +26,10 @@ embeddings = HuggingFaceEmbeddings(
 
 vectorstore = FAISS.from_documents(docs, embeddings)
 
-query = "What is this document about?"
+query = "What was the net income in year 2025"
 
 retriever = vectorstore.as_retriever()
-relevant_docs = retriever.invoke(query)
+# relevant_docs = retriever.invoke(query)
 
-print(relevant_docs[1].page_content)
+# print(relevant_docs[0].page_content)
+print(ask_question(query, retriever))

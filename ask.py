@@ -1,4 +1,5 @@
-def ask_question(query):
+from llm import call_grok
+def ask_question(query, retriever):
     relevant_docs = retriever.invoke(query)
 
     context = "\n".join([doc.page_content for doc in relevant_docs])
