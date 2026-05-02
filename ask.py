@@ -1,20 +1,35 @@
 from llm import call_grok
+
+
 def ask_question(query, retriever):
     relevant_docs = retriever.invoke(query)
+    passages = []
+    for d in relevant_docs:
+        text = getattr(d, "page_content", None) or ""
+        text = text.strip()
+        if text:
+            passages.append(text)
 
-    context = "\n".join([doc.page_content for doc in relevant_docs])
+    if not passages:
+        return (
+            "No passages were retrieved from your document for this question. "
+            "Try keywords that appear in the PDF, or shorten / rephrase the question."
+        )
 
-    prompt = f"""
-    You are an AI assistant.
+    context = "\n---\n".join(passages)
 
-    Answer ONLY from the context below.
-    If answer is not in context, say "Not found".
+    prompt = f"""You answer questions using ONLY the excerpts below.
 
-    Context:
-    {context}
+Rules:
+- Use the excerpts as your only source of facts.
+- Prefer a concise, direct answer. If the excerpts only partially relate, summarize what they do say and note what they do not cover.
+- If the excerpts genuinely do not address the question at all, reply exactly: Cannot answer from this document.
 
-    Question:
-    {query}
-    """
+Excerpts:
+{context}
+
+Question:
+{query}
+"""
 
     return call_grok(prompt)

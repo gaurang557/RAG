@@ -3,3 +3,5 @@
 __pycache__/
 rag_env/
 *.pdf
+data/
+rag-ui/node_modules/

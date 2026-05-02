@@ -1,0 +1,152 @@
+<div class="shell">
+  <header class="top">
+    <div>
+      <h1>RAG workspace</h1>
+      <p class="muted">Upload once per browser session (cookie). Questions reuse the saved index.</p>
+    </div>
+    <div class="api-pill muted" title="Backend base URL">{{ apiUrlDisplay() }}</div>
+  </header>
+
+  <section class="panel grid">
+    <div>
+      <h2>Auth (optional)</h2>
+      <p class="muted small">
+        Leave empty for anonymous cookies. Match your FastAPI secret by sending a Bearer token (see
+        <code>API_ACCESS_TOKEN</code>).
+      </p>
+      <div class="row">
+        <input
+          class="grow"
+          type="password"
+          autocomplete="off"
+          placeholder="Paste bearer token…"
+          [(ngModel)]="bearerDraft"
+        />
+        <button type="button" class="btn secondary" (click)="persistBearer()">Save token</button>
+      </div>
+      <p class="muted small mt8">Stored in session storage for this browser tab only.</p>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="flex-between">
+      <h2 class="mt0 mb0">Session</h2>
+      <button type="button" class="btn tertiary" [disabled]="sessionBusy()" (click)="refreshSession()">
+        Refresh
+      </button>
+    </div>
+
+    @if (session(); as s) {
+      <dl class="facts">
+        <div>
+          <dt>Session ID</dt>
+          <dd class="mono" [title]="s.session_id">{{ shortenId(s.session_id) }}</dd>
+        </div>
+        <div>
+          <dt>Indexed</dt>
+          <dd>{{ s.indexed ? 'Yes' : 'No' }}</dd>
+        </div>
+        <div>
+          <dt>Authenticated</dt>
+          <dd>{{ s.authenticated ? 'Yes' : 'No' }}</dd>
+        </div>
+      </dl>
+    } @else if (sessionBusy()) {
+      <p class="muted" aria-live="polite">Loading session…</p>
+    } @else if (sessionError(); as se) {
+      <p class="warning" aria-live="assertive">
+        {{ se }} — backend at <code>{{ apiUrlDisplay() }}</code> (ensure CORS includes <code>http://localhost:4200</code>
+        ).
+      </p>
+    } @else {
+      <p class="muted" aria-live="polite">Preparing session…</p>
+    }
+  </section>
+
+  <section class="panel">
+    <h2 class="mt0">1. Upload PDF</h2>
+    <p class="muted small">Exactly one PDF per cookie session.</p>
+
+    <input
+      #fileChooser
+      type="file"
+      accept="application/pdf,.pdf"
+      class="visually-hidden"
+      (change)="onFilePicked($event)"
+    />
+
+    <div class="row wrap">
+      <button type="button" class="btn secondary" (click)="triggerFileChooser()" [disabled]="uploadBusy() || uploadSuccess() || session()?.indexed">
+        Choose PDF
+      </button>
+      <button
+        type="button"
+        class="btn"
+        (click)="upload()"
+        [disabled]="uploadBusy() || !chosenFileMeta() || uploadSuccess() || session()?.indexed"
+      >
+        @if (uploadBusy()) {
+          Indexing…
+        } @else {
+          Index document
+        }
+      </button>
+      @if (chosenFileMeta(); as meta) {
+        <span class="chip mono">{{ meta.name }} · {{ meta.size | number }} bytes</span>
+        <button type="button" class="btn tertiary" (click)="clearChosenFile()" [disabled]="uploadBusy() || uploadSuccess() || session()?.indexed">
+          Clear
+        </button>
+      }
+    </div>
+
+    @if (uploadSuccess() || session()?.indexed) {
+      <p class="ok">Document indexed — embeddings computed on upload.</p>
+    }
+
+    @if (uploadError(); as ue) {
+      <p class="error" aria-live="assertive">{{ ue }}</p>
+    }
+  </section>
+
+  <section class="panel">
+    <h2 class="mt0">2. Ask a question</h2>
+
+    <label class="block">
+      <span class="muted small">Question</span>
+      <textarea
+        class="textarea"
+        rows="4"
+        [(ngModel)]="question"
+        placeholder="Ask something answerable only from your PDF…"
+        [disabled]="askBusy()"
+      ></textarea>
+    </label>
+
+    <div class="row">
+      <button type="button" class="btn" (click)="ask()" [disabled]="askBusy() || !question.trim()">
+        @if (askBusy()) {
+          Asking…
+        } @else {
+          Ask
+        }
+      </button>
+      @if (answer(); as a) {
+        <span class="muted small">{{ a.length }} characters</span>
+      }
+    </div>
+
+    @if (askError(); as ae) {
+      <p class="error mt12" aria-live="assertive">{{ ae }}</p>
+    }
+
+    @if (answer(); as ans) {
+      <article class="answer mt12 mono" aria-live="polite">
+        {{ ans }}
+      </article>
+    }
+  </section>
+
+  <footer class="muted small">
+    Frontend: Angular · Backend: FastAPI (<code>/upload</code>, <code>/ask</code>)
+  </footer>
+</div>
