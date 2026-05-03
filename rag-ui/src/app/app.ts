@@ -1,23 +1,26 @@
 import { CommonModule } from '@angular/common';
 import { Component, ElementRef, afterNextRender, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import { finalize } from 'rxjs';
 
 import { httpErrorDetail } from './api-error';
 import { environment } from '../environments/environment';
-import { ApiTokenStore } from './services/api-token.store';
+import { AuthService } from './auth/auth.service';
 import type { SessionInfo } from './services/rag-api.service';
 import { RagApiService } from './services/rag-api.service';
+import { SignupComponent } from './auth/signup/signup.component';
 
 @Component({
   selector: 'app-root',
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, SignupComponent],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
 export class App {
   private readonly api = inject(RagApiService);
-  protected readonly tokens = inject(ApiTokenStore);
+  private readonly authService = inject(AuthService);
+  private readonly router = inject(Router);
 
   protected readonly apiUrlDisplay = signal(environment.apiUrl);
 
@@ -33,8 +36,6 @@ export class App {
   protected readonly answer = signal<string | null>(null);
   protected readonly askError = signal<string | null>(null);
 
-  protected bearerDraft = '';
-
   /** Question textarea */
   protected question = '';
 
@@ -44,9 +45,15 @@ export class App {
   readonly fileChooser = viewChild<ElementRef<HTMLInputElement>>('fileChooser');
 
   constructor() {
-    this.bearerDraft = this.tokens.token();
     afterNextRender(() => {
-      void this.refreshSession();
+      this.authService.checkAuthStatus();
+      
+      // Subscribe to auth state changes
+      this.authService.authState$.subscribe(state => {
+        if (state.isAuthenticated) {
+          void this.refreshSession();
+        }
+      });
     });
   }
 
@@ -55,9 +62,23 @@ export class App {
     return `${id.slice(0, 6)}…${id.slice(-6)}`;
   }
 
-  protected persistBearer(): void {
-    this.tokens.setPersistedToken(this.bearerDraft);
-    void this.refreshSession();
+  protected logout(): void {
+    this.authService.logout();
+    void this.router.navigate(['/login']);
+  }
+
+  protected createNewSession(): void {
+    this.api.newSession().subscribe({
+      next: () => {
+        void this.refreshSession();
+        this.uploadSuccess.set(false);
+        this.answer.set(null);
+        this.askError.set(null);
+      },
+      error: (e: any) => {
+        this.sessionError.set(httpErrorDetail(e));
+      }
+    });
   }
 
   protected triggerFileChooser(): void {

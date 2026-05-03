@@ -8,6 +8,7 @@ export interface SessionInfo {
   session_id: string;
   authenticated: boolean;
   indexed: boolean;
+  username?: string;
 }
 
 export interface UploadResponse {
@@ -19,6 +20,13 @@ export interface UploadResponse {
 export interface AskResponse {
   answer: string;
   authenticated: boolean;
+}
+
+export interface NewSessionResponse {
+  session_id: string;
+  authenticated: boolean;
+  indexed: boolean;
+  username: string;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -42,5 +50,9 @@ export class RagApiService {
 
   ask(question: string): Observable<AskResponse> {
     return this.http.post<AskResponse>(`${this.base}/ask`, { question });
+  }
+
+  newSession(): Observable<NewSessionResponse> {
+    return this.http.post<NewSessionResponse>(`${this.base}/new-session`, {});
   }
 }

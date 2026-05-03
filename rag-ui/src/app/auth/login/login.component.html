@@ -1,0 +1,57 @@
+<div class="auth-container">
+  <div class="auth-card">
+    <h1>Login</h1>
+    <p class="muted">Enter your credentials to access the RAG workspace</p>
+
+    <form (ngSubmit)="login()" class="auth-form">
+      <div class="form-group">
+        <label for="username">Username</label>
+        <input
+          id="username"
+          type="text"
+          [(ngModel)]="username"
+          name="username"
+          required
+          [disabled]="busy()"
+          placeholder="Enter your username"
+        />
+      </div>
+
+      <div class="form-group">
+        <label for="password">Password</label>
+        <input
+          id="password"
+          type="password"
+          [(ngModel)]="password"
+          name="password"
+          required
+          [disabled]="busy()"
+          placeholder="Enter your password"
+        />
+      </div>
+
+      @if (error(); as errorMessage) {
+        <div class="error-message" aria-live="assertive">
+          {{ errorMessage }}
+        </div>
+      }
+
+      <div class="form-actions">
+        <button type="submit" class="btn primary" [disabled]="busy() || !username || !password">
+          @if (busy()) {
+            Logging in...
+          } @else {
+            Login
+          }
+        </button>
+      </div>
+    </form>
+
+    <div class="auth-footer">
+      <p class="muted">
+        Don't have an account? 
+        <button type="button" class="link-button" (click)="goToSignup()">Sign up</button>
+      </p>
+    </div>
+  </div>
+</div>

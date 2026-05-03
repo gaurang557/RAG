@@ -1,17 +1,17 @@
 import { HttpInterceptorFn } from '@angular/common/http';
 import { inject } from '@angular/core';
 
-import { ApiTokenStore } from '../services/api-token.store';
+import { AuthService } from '../auth/auth.service';
 
-/** Sends session cookies (`withCredentials`) and optional Bearer token. */
+/** Sends session cookies (`withCredentials`) and Basic Auth credentials. */
 export const ragHttpInterceptor: HttpInterceptorFn = (req, next) => {
-  const tokenStore = inject(ApiTokenStore).token();
+  const authService = inject(AuthService);
 
   let out = req.clone({ withCredentials: true });
-  const t = tokenStore.trim();
+  const authHeaders = authService.getAuthHeaders();
 
-  if (t) {
-    out = out.clone({ setHeaders: { Authorization: `Bearer ${t}` } });
+  if (authHeaders['Authorization']) {
+    out = out.clone({ setHeaders: authHeaders });
   }
 
   return next(out);
