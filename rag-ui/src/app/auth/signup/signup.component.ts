@@ -11,6 +11,7 @@ import { AuthService } from '../auth.service';
   selector: 'app-signup',
   imports: [CommonModule, FormsModule],
   templateUrl: './signup.component.html',
+  standalone: true,
   styleUrl: '../auth.scss'
 })
 export class SignupComponent {

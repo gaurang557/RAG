@@ -3,7 +3,7 @@ import { Component, ElementRef, afterNextRender, inject, signal, viewChild } fro
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { finalize } from 'rxjs';
-
+import { RouterOutlet } from '@angular/router'; 
 import { httpErrorDetail } from './api-error';
 import { environment } from '../environments/environment';
 import { AuthService } from './auth/auth.service';
@@ -13,7 +13,7 @@ import { SignupComponent } from './auth/signup/signup.component';
 
 @Component({
   selector: 'app-root',
-  imports: [CommonModule, FormsModule, SignupComponent],
+  imports: [CommonModule, FormsModule, SignupComponent, RouterOutlet],
   templateUrl: './app.html',
   styleUrl: './app.scss',
 })
@@ -61,7 +61,9 @@ export class App {
     if (id.length <= 14) return id;
     return `${id.slice(0, 6)}…${id.slice(-6)}`;
   }
-
+  protected goToSignup(): void {
+    this.router.navigate(['/signup']);
+  }
   protected logout(): void {
     this.authService.logout();
     void this.router.navigate(['/login']);

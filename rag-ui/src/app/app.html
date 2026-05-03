@@ -4,16 +4,19 @@
       <h1>RAG workspace</h1>
       <p class="muted">Upload documents and ask questions. File replacement is supported.</p>
     </div>
-    <app-signup></app-signup>
     <div class="header-actions">
       @if (session(); as s) {
         <span class="user-info">Welcome, {{ s.username }}</span>
         <button type="button" class="btn tertiary" (click)="logout()">Logout</button>
+      }@else {
+        <button type="button" class="btn secondary" (click)="goToSignup()">
+          Signup
+        </button>
       }
       <div class="api-pill muted" title="Backend base URL">{{ apiUrlDisplay() }}</div>
     </div>
   </header>
-
+  <router-outlet></router-outlet>
   <section class="panel grid">
     <div class="flex-between">
       <h2 class="mt0 mb0">Session</h2>
