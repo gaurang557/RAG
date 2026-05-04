@@ -194,7 +194,7 @@ export class Home implements OnInit {
   }
 
   protected onEnterKey(ev: KeyboardEvent): void {
-    if (!ev.shiftKey) {
+    if (ev.key === 'Enter' && !ev.shiftKey) {
       ev.preventDefault();
       this.ask();
     }
