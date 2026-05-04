@@ -1,11 +1,16 @@
+import asyncio
 import logging
 import os
+import re
+import shutil
 import tempfile
+from collections import OrderedDict
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, Depends, status
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Request, UploadFile, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
@@ -20,7 +25,7 @@ from rag_service import (
     new_session_id,
     persist_faiss_from_pdf_path,
     rag_retriever,
-    upload_lock,
+    faiss_dir_for_session,
 )
 
 load_dotenv()
@@ -29,7 +34,6 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 SID_KEY = "rag_sid"
-UPLOAD_DONE_KEY = "rag_upload_done"
 
 SESSION_SECRET_KEY = os.getenv("SESSION_SECRET_KEY")
 if not SESSION_SECRET_KEY:
@@ -39,22 +43,84 @@ if not SESSION_SECRET_KEY:
     )
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/rag_db")
+MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
+MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+MAX_QUESTION_LEN = 2000
 
 app = FastAPI(title="RAG API", version="1.0.0")
 security = HTTPBasic()
 
 
+# ─── INPUT SANITIZATION ────────────────────────────────────────────────────────
+
+_CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_text(text: str, max_len: int = MAX_QUESTION_LEN) -> str:
+    return _CONTROL_RE.sub("", text).strip()[:max_len]
+
+
+# ─── QUERY CACHE (LRU) ─────────────────────────────────────────────────────────
+
+_MAX_QUERY_CACHE = int(os.getenv("MAX_QUERY_CACHE", "200"))
+
+
+class _LRUCache:
+    def __init__(self, maxsize: int) -> None:
+        self._data: OrderedDict[tuple, str] = OrderedDict()
+        self._maxsize = maxsize
+
+    def get(self, key: tuple) -> str | None:
+        if key not in self._data:
+            return None
+        self._data.move_to_end(key)
+        return self._data[key]
+
+    def put(self, key: tuple, value: str) -> None:
+        if key in self._data:
+            self._data.move_to_end(key)
+        self._data[key] = value
+        if len(self._data) > self._maxsize:
+            self._data.popitem(last=False)
+
+    def clear_session(self, session_id: str) -> None:
+        for k in [k for k in list(self._data) if k[0] == session_id]:
+            del self._data[k]
+
+
+_query_cache = _LRUCache(_MAX_QUERY_CACHE)
+
+
+# ─── UPLOAD JOB TRACKER ────────────────────────────────────────────────────────
+# Maps session_id -> {"status": "pending"|"done"|"error", "message": str|None}
+
+_upload_jobs: dict[str, dict] = {}
+
+
+async def _ingest_pdf_bg(tmp_path: Path, sid: str) -> None:
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(None, persist_faiss_from_pdf_path, tmp_path, sid)
+        _upload_jobs[sid] = {"status": "done", "message": None}
+        logger.info("Background ingest complete for session %s", sid)
+    except Exception as e:
+        logger.exception("Background ingest failed for session %s", sid)
+        _upload_jobs[sid] = {"status": "error", "message": f"Ingest failed: {e!s}"}
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+# ─── CORS ──────────────────────────────────────────────────────────────────────
+
 def _cors_settings() -> tuple[list[str], bool]:
-    """
-    Cookie sessions need allow_credentials=True and non-wildcard Allow-Origin in browsers.
-    Use CORS_ALLOW_ORIGINS=* for tooling-only setups (omit credentials).
-    """
     raw = (os.getenv("CORS_ALLOW_ORIGINS") or "").strip()
     if raw == "*":
         return ["*"], False
     if raw:
         return [x.strip() for x in raw.split(",") if x.strip()], True
-    # Sensible SPA dev defaults; adjust via CORS_ALLOW_ORIGINS when needed.
     return [
         "http://localhost:3000",
         "http://127.0.0.1:3000",
@@ -77,9 +143,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
 app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY, session_cookie="rag_session")
 
+
+# ─── GLOBAL EXCEPTION HANDLER ──────────────────────────────────────────────────
+
+@app.exception_handler(Exception)
+async def _unhandled_exc_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "An unexpected error occurred. Please try again."},
+    )
+
+
+# ─── HELPERS ───────────────────────────────────────────────────────────────────
 
 def ensure_session_id(session: dict) -> str:
     sid = session.get(SID_KEY)
@@ -96,6 +174,7 @@ def get_db():
     finally:
         db.close()
 
+
 def get_current_user(credentials: HTTPBasicCredentials = Depends(security), db: Session = Depends(get_db)):
     user = authenticate_user(db, credentials.username, credentials.password)
     if not user:
@@ -107,14 +186,18 @@ def get_current_user(credentials: HTTPBasicCredentials = Depends(security), db: 
     return user
 
 
+# ─── REQUEST MODELS ────────────────────────────────────────────────────────────
+
 class AskBody(BaseModel):
-    question: str = Field(..., min_length=1)
+    question: str = Field(..., min_length=1, max_length=MAX_QUESTION_LEN)
 
 
 class SignupBody(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50)
+    username: str = Field(..., min_length=3, max_length=50, pattern=r"^[a-zA-Z0-9_-]+$")
     password: str = Field(..., min_length=6, max_length=100)
 
+
+# ─── ENDPOINTS ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
@@ -125,70 +208,75 @@ async def health():
 async def signup(body: SignupBody, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.username == body.username).first()
     if existing_user:
-        raise HTTPException(
-            status_code=409,
-            detail="Username already exists"
-        )
-    
+        raise HTTPException(status_code=409, detail="Username already exists.")
+
     hashed_password = get_password_hash(body.password)
     new_user = User(username=body.username, hashed_password=hashed_password)
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    
-    return {
-        "message": "User created successfully",
-        "username": new_user.username,
-        "id": new_user.id
-    }
+
+    return {"message": "User created successfully", "username": new_user.username, "id": new_user.id}
 
 
 @app.get("/session")
 async def session_info(request: Request, current_user: User = Depends(get_current_user)):
     sid = ensure_session_id(request.session)
+    job = _upload_jobs.get(sid, {})
+    upload_status = job.get("status")
     return {
         "session_id": sid,
         "authenticated": True,
-        "indexed": bool(request.session.get(UPLOAD_DONE_KEY)),
+        "indexed": upload_status == "done",
+        "upload_pending": upload_status == "pending",
+        "upload_error": job.get("message") if upload_status == "error" else None,
         "username": current_user.username,
     }
 
 
 @app.post("/upload")
-async def upload_pdf(request: Request, file: UploadFile = File(...), current_user: User = Depends(get_current_user)):
+async def upload_pdf(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
     sid = ensure_session_id(request.session)
 
-    
     fname = file.filename or ""
     if not fname.lower().endswith(".pdf"):
+        raise HTTPException(status_code=400, detail="Only PDF uploads are supported.")
+
+    if _upload_jobs.get(sid, {}).get("status") == "pending":
         raise HTTPException(
-            status_code=400,
-            detail="Only PDF uploads are supported.",
+            status_code=409, detail="A document is already being processed. Please wait."
         )
 
-    async with upload_lock(sid):
+    content = await file.read()
 
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-            tmp_path = Path(tmp.name)
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-        try:
-            content = await file.read()
-            tmp_path.write_bytes(content)
-            persist_faiss_from_pdf_path(tmp_path, sid)
-        except Exception as e:
-            logger.exception("Ingest failed")
-            raise HTTPException(status_code=500, detail=f"Ingest failed: {e!s}") from e
-        finally:
-            try:
-                tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_MB} MB.",
+        )
 
-        request.session[UPLOAD_DONE_KEY] = True
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+    tmp_path.write_bytes(content)
+
+    invalidate_faiss_cache(sid)
+    _query_cache.clear_session(sid)
+    _upload_jobs[sid] = {"status": "pending", "message": None}
+
+    background_tasks.add_task(_ingest_pdf_bg, tmp_path, sid)
 
     return {
         "ok": True,
-        "indexed": True,
+        "processing": True,
+        "indexed": False,
         "authenticated": True,
         "username": current_user.username,
     }
@@ -198,31 +286,60 @@ async def upload_pdf(request: Request, file: UploadFile = File(...), current_use
 async def ask(request: Request, body: AskBody, current_user: User = Depends(get_current_user)):
     sid = ensure_session_id(request.session)
 
-    if not request.session.get(UPLOAD_DONE_KEY):
+    job = _upload_jobs.get(sid, {})
+    upload_status = job.get("status")
+
+    if upload_status == "pending":
+        raise HTTPException(status_code=409, detail="Document is still being processed. Please wait.")
+
+    if upload_status != "done":
         raise HTTPException(
             status_code=400,
-            detail="Upload a PDF first (one per session); embeddings will be computed at upload time.",
+            detail="Upload a PDF first; embeddings will be computed at upload time.",
         )
+
+    sanitized_q = _sanitize_text(body.question)
+    if not sanitized_q:
+        raise HTTPException(status_code=400, detail="Question cannot be empty after sanitization.")
+
+    cache_key = (sid, sanitized_q.lower())
+    cached_answer = _query_cache.get(cache_key)
+    if cached_answer is not None:
+        return {
+            "answer": cached_answer,
+            "authenticated": True,
+            "username": current_user.username,
+            "cached": True,
+        }
 
     vectorstore = get_cached_faiss(sid)
     if vectorstore is None:
         raise HTTPException(
             status_code=404,
-            detail="Indexed store not found on disk for this session; upload again.",
+            detail="Indexed store not found for this session. Please upload the document again.",
         )
 
     retriever = rag_retriever(vectorstore)
 
     try:
-        answer = ask_question(body.question, retriever)
+        answer = ask_question(sanitized_q, retriever)
+    except TimeoutError:
+        logger.warning("LLM timeout for session %s", sid)
+        raise HTTPException(
+            status_code=504,
+            detail="The AI model took too long to respond. Please try again.",
+        )
     except Exception as e:
-        logger.exception("Ask failed")
-        raise HTTPException(status_code=502, detail=str(e)) from e
+        logger.exception("Ask failed for session %s", sid)
+        raise HTTPException(status_code=502, detail="Failed to get an answer. Please try again.") from e
+
+    _query_cache.put(cache_key, answer)
 
     return {
         "answer": answer,
         "authenticated": True,
         "username": current_user.username,
+        "cached": False,
     }
 
 
@@ -231,17 +348,17 @@ async def create_new_session(request: Request, current_user: User = Depends(get_
     old_sid = request.session.get(SID_KEY)
     if old_sid:
         invalidate_faiss_cache(old_sid)
-        
-        from rag_service import faiss_dir_for_session
-        import shutil
+        _query_cache.clear_session(old_sid)
+        _upload_jobs.pop(old_sid, None)
+
         old_dir = faiss_dir_for_session(old_sid)
         if old_dir.exists():
             shutil.rmtree(old_dir, ignore_errors=True)
-    
+
     request.session.clear()
     new_sid = new_session_id()
     request.session[SID_KEY] = new_sid
-    
+
     return {
         "session_id": new_sid,
         "authenticated": True,

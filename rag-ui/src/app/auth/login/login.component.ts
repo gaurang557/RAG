@@ -25,17 +25,33 @@ export class LoginComponent {
   protected login(): void {
     if (this.busy()) return;
 
+    const username = this.username.trim();
+    const password = this.password;
+
+    if (!username) {
+      this.error.set('Username is required.');
+      return;
+    }
+    if (username.length > 50) {
+      this.error.set('Username must not exceed 50 characters.');
+      return;
+    }
+    if (!password) {
+      this.error.set('Password is required.');
+      return;
+    }
+
     this.busy.set(true);
     this.error.set(null);
 
     this.authService
-      .login(this.username, this.password)
+      .login(username, password)
       .pipe(finalize(() => this.busy.set(false)))
       .subscribe({
         next: () => {
           void this.router.navigate(['/home']);
         },
-        error: (e) => {
+        error: (e: unknown) => {
           this.error.set(httpErrorDetail(e));
         },
       });

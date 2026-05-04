@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, ElementRef, OnInit, inject, signal, viewChild } from '@angular/core';
+import { Component, ElementRef, OnDestroy, OnInit, inject, signal, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { finalize } from 'rxjs';
@@ -15,13 +15,18 @@ interface ChatMessage {
   isError?: boolean;
 }
 
+const MAX_FILE_MB = 50;
+const MAX_FILE_BYTES = MAX_FILE_MB * 1024 * 1024;
+const MAX_QUESTION_LEN = 2000;
+const POLL_INTERVAL_MS = 1500;
+
 @Component({
   selector: 'app-home',
   imports: [CommonModule, FormsModule],
   templateUrl: './home.html',
   styleUrl: './home.scss',
 })
-export class Home implements OnInit {
+export class Home implements OnInit, OnDestroy {
   private readonly api = inject(RagApiService);
   private readonly authService = inject(AuthService);
   private readonly router = inject(Router);
@@ -31,6 +36,7 @@ export class Home implements OnInit {
   protected readonly sessionError = signal<string | null>(null);
 
   protected readonly uploadBusy = signal(false);
+  protected readonly uploadProcessing = signal(false);
   protected readonly uploadSuccess = signal(false);
   protected readonly uploadError = signal<string | null>(null);
 
@@ -42,12 +48,19 @@ export class Home implements OnInit {
 
   protected readonly chosenFileMeta = signal<{ name: string; size: number } | null>(null);
   private pendingFile: File | null = null;
+  private _pollTimer: ReturnType<typeof setTimeout> | null = null;
 
   readonly fileChooser = viewChild<ElementRef<HTMLInputElement>>('fileChooser');
   readonly chatScroll = viewChild<ElementRef<HTMLDivElement>>('chatScroll');
 
+  readonly maxQuestionLen = MAX_QUESTION_LEN;
+
   ngOnInit(): void {
     void this.refreshSession();
+  }
+
+  ngOnDestroy(): void {
+    this._clearPoll();
   }
 
   protected get username(): string {
@@ -58,18 +71,24 @@ export class Home implements OnInit {
     return this.username.charAt(0).toUpperCase() || '?';
   }
 
+  protected get questionTooLong(): boolean {
+    return this.question.length > MAX_QUESTION_LEN;
+  }
+
   protected shortenId(id: string): string {
     if (id.length <= 14) return id;
     return `${id.slice(0, 6)}…${id.slice(-6)}`;
   }
 
   protected logout(): void {
+    this._clearPoll();
     this.authService.logout();
     void this.router.navigate(['/login']);
   }
 
   protected createNewSession(): void {
     if (this.sessionBusy()) return;
+    this._clearPoll();
     this.sessionBusy.set(true);
     this.api
       .newSession()
@@ -79,11 +98,12 @@ export class Home implements OnInit {
           this.session.set(s);
           this.uploadSuccess.set(false);
           this.uploadError.set(null);
+          this.uploadProcessing.set(false);
           this.chosenFileMeta.set(null);
           this.pendingFile = null;
           this.chatHistory.set([]);
         },
-        error: (e: any) => {
+        error: (e: unknown) => {
           this.sessionError.set(httpErrorDetail(e));
         },
       });
@@ -93,12 +113,27 @@ export class Home implements OnInit {
     this.fileChooser()?.nativeElement.click();
   }
 
+  private _validateFile(f: File): string | null {
+    if (!f.name.toLowerCase().endsWith('.pdf')) {
+      return 'Only PDF files are supported.';
+    }
+    if (f.size === 0) {
+      return 'The selected file is empty.';
+    }
+    if (f.size > MAX_FILE_BYTES) {
+      return `File is too large. Maximum size is ${MAX_FILE_MB} MB.`;
+    }
+    return null;
+  }
+
   protected onFilePicked(ev: Event): void {
     const input = ev.target as HTMLInputElement;
     const f = input.files?.[0];
     if (!f) return;
-    if (!f.name.toLowerCase().endsWith('.pdf')) {
-      this.uploadError.set('Only PDF files are supported.');
+
+    const err = this._validateFile(f);
+    if (err) {
+      this.uploadError.set(err);
       this.pendingFile = null;
       this.chosenFileMeta.set(null);
       input.value = '';
@@ -124,8 +159,10 @@ export class Home implements OnInit {
     this.isDragging.set(false);
     const f = ev.dataTransfer?.files?.[0];
     if (!f) return;
-    if (!f.name.toLowerCase().endsWith('.pdf')) {
-      this.uploadError.set('Only PDF files are supported.');
+
+    const err = this._validateFile(f);
+    if (err) {
+      this.uploadError.set(err);
       return;
     }
     this.uploadError.set(null);
@@ -144,31 +181,81 @@ export class Home implements OnInit {
 
   protected upload(): void {
     const file = this.pendingFile;
-    if (!file || this.uploadBusy()) return;
+    if (!file || this.uploadBusy() || this.uploadProcessing()) return;
 
     this.uploadBusy.set(true);
     this.uploadError.set(null);
+    this._clearPoll();
 
     this.api
       .uploadPdf(file)
       .pipe(finalize(() => this.uploadBusy.set(false)))
       .subscribe({
-        next: () => {
-          this.uploadSuccess.set(true);
-          this.chatHistory.set([]);
-          void this.refreshSession();
+        next: (r) => {
+          if (r.processing) {
+            this.uploadProcessing.set(true);
+            this.uploadSuccess.set(false);
+            this._startPolling();
+          } else {
+            this.uploadSuccess.set(true);
+            this.uploadProcessing.set(false);
+            this.chatHistory.set([]);
+            void this.refreshSession();
+          }
         },
-        error: (e) => {
+        error: (e: unknown) => {
           this.uploadError.set(httpErrorDetail(e));
           this.uploadSuccess.set(false);
-          void this.refreshSession();
+          this.uploadProcessing.set(false);
         },
       });
+  }
+
+  private _startPolling(): void {
+    const check = () => {
+      this.api.session().subscribe({
+        next: (s) => {
+          this.session.set(s);
+          if (s.indexed) {
+            this.uploadProcessing.set(false);
+            this.uploadSuccess.set(true);
+            this.chatHistory.set([]);
+          } else if (s.upload_pending) {
+            this._pollTimer = setTimeout(check, POLL_INTERVAL_MS);
+          } else if (s.upload_error) {
+            this.uploadProcessing.set(false);
+            this.uploadError.set(s.upload_error);
+          } else {
+            this._pollTimer = setTimeout(check, POLL_INTERVAL_MS);
+          }
+        },
+        error: () => {
+          this.uploadProcessing.set(false);
+          this.uploadError.set('Failed to check processing status. Please try uploading again.');
+        },
+      });
+    };
+    this._pollTimer = setTimeout(check, POLL_INTERVAL_MS);
+  }
+
+  private _clearPoll(): void {
+    if (this._pollTimer !== null) {
+      clearTimeout(this._pollTimer);
+      this._pollTimer = null;
+    }
   }
 
   protected ask(): void {
     const q = this.question.trim();
     if (!q || this.askBusy()) return;
+
+    if (q.length > MAX_QUESTION_LEN) {
+      this.chatHistory.update((h) => [
+        ...h,
+        { type: 'ai', content: `Question is too long (max ${MAX_QUESTION_LEN} characters).`, isError: true },
+      ]);
+      return;
+    }
 
     this.question = '';
     this.askBusy.set(true);
@@ -183,7 +270,7 @@ export class Home implements OnInit {
           this.chatHistory.update((h) => [...h, { type: 'ai', content: r.answer ?? '' }]);
           this.scrollToBottom();
         },
-        error: (e) => {
+        error: (e: unknown) => {
           this.chatHistory.update((h) => [
             ...h,
             { type: 'ai', content: httpErrorDetail(e), isError: true },
@@ -209,10 +296,10 @@ export class Home implements OnInit {
       .pipe(finalize(() => this.sessionBusy.set(false)))
       .subscribe({
         next: (s) => this.session.set(s),
-        error: (e) => {
+        error: (e: unknown) => {
           this.session.set(null);
           this.sessionError.set(httpErrorDetail(e));
-          if (e?.status === 401) {
+          if ((e as { status?: number })?.status === 401) {
             this.authService.logout();
             void this.router.navigate(['/login']);
           }

@@ -1,4 +1,5 @@
 import os
+
 import requests
 from dotenv import load_dotenv
 
@@ -6,6 +7,7 @@ load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 
 
 def _extract_error_message(payload):
@@ -31,38 +33,34 @@ def _fetch_available_models(base_url, headers):
     if not isinstance(models, list):
         return []
 
-    ids = []
-    for model in models:
-        if isinstance(model, dict) and isinstance(model.get("id"), str):
-            ids.append(model["id"])
-    return ids
+    return [m["id"] for m in models if isinstance(m, dict) and isinstance(m.get("id"), str)]
 
 
-def call_grok(prompt):
-    # Prefer Groq if GROQ_API_KEY is present, otherwise use xAI Grok.
+def call_grok(prompt: str) -> str:
     if GROQ_API_KEY:
         provider_name = "Groq"
         api_key = GROQ_API_KEY
         model = GROQ_MODEL
         base_url = "https://api.groq.com/openai/v1"
     else:
-        raise ValueError("Missing API key. Set GROQ_API_KEY (or GROK_API_KEY).")
+        raise ValueError("Missing API key. Set GROQ_API_KEY in your .env file.")
 
     url = f"{base_url}/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    data = {"model": model, "messages": [{"role": "user", "content": prompt}]}
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "model": model,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ]
-    }
-
-    response = requests.post(url, headers=headers, json=data, timeout=30)
+    try:
+        response = requests.post(url, headers=headers, json=data, timeout=LLM_TIMEOUT)
+    except requests.exceptions.Timeout:
+        raise TimeoutError(
+            f"{provider_name} API did not respond within {LLM_TIMEOUT} seconds. "
+            "Try again or check your network connection."
+        )
+    except requests.exceptions.ConnectionError as exc:
+        raise RuntimeError(
+            f"Could not connect to {provider_name} API. "
+            "Check your network connection and try again."
+        ) from exc
 
     try:
         payload = response.json()
@@ -75,35 +73,32 @@ def call_grok(prompt):
         error_text = str(error_msg).lower()
         if "model not found" in error_text:
             available_models = _fetch_available_models(base_url, headers)
-            if available_models:
-                raise RuntimeError(
-                    f"{provider_name} API error "
-                    f"({response.status_code}): {error_msg}. "
-                    f"Set {'GROQ_MODEL' if provider_name == 'Groq' else 'GROK_MODEL'} in .env to one of: {', '.join(available_models)}"
-                )
+            hint = (
+                f" Set GROQ_MODEL in .env to one of: {', '.join(available_models)}"
+                if available_models
+                else f" Set GROQ_MODEL in .env to a valid model for your account."
+            )
             raise RuntimeError(
-                f"{provider_name} API error "
-                f"({response.status_code}): {error_msg}. "
-                f"Set {'GROQ_MODEL' if provider_name == 'Groq' else 'GROK_MODEL'} in .env to a valid model for your account."
+                f"{provider_name} model not found ({response.status_code}): {error_msg}.{hint}"
             )
         raise RuntimeError(f"{provider_name} API error ({response.status_code}): {error_msg}")
 
     if not isinstance(payload, dict):
-        raise RuntimeError(f"Unexpected {provider_name} response type: {type(payload).__name__} | {payload}")
+        raise RuntimeError(f"Unexpected {provider_name} response type: {type(payload).__name__}")
 
     choices = payload.get("choices")
     if not choices:
         raise RuntimeError(f"Unexpected {provider_name} response format: {payload}")
 
     if not isinstance(choices[0], dict):
-        raise RuntimeError(f"Unexpected choice format in {provider_name} response: {payload}")
+        raise RuntimeError(f"Unexpected choice format in {provider_name} response.")
 
     message = choices[0].get("message", {})
     if not isinstance(message, dict):
-        raise RuntimeError(f"Unexpected message format in {provider_name} response: {payload}")
+        raise RuntimeError(f"Unexpected message format in {provider_name} response.")
 
     content = message.get("content")
     if not content:
-        raise RuntimeError(f"{provider_name} response missing message content: {payload}")
+        raise RuntimeError(f"{provider_name} response missing message content.")
 
     return content

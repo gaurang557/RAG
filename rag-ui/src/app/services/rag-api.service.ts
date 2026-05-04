@@ -8,18 +8,23 @@ export interface SessionInfo {
   session_id: string;
   authenticated: boolean;
   indexed: boolean;
+  upload_pending?: boolean;
+  upload_error?: string | null;
   username?: string;
 }
 
 export interface UploadResponse {
   ok: boolean;
+  processing: boolean;
   indexed: boolean;
   authenticated: boolean;
+  username?: string;
 }
 
 export interface AskResponse {
   answer: string;
   authenticated: boolean;
+  cached?: boolean;
 }
 
 export interface NewSessionResponse {
