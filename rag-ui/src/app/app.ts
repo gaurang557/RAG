@@ -66,6 +66,8 @@ export class App {
   }
   protected logout(): void {
     this.authService.logout();
+    this.session.set(null);
+    this.sessionError.set(null);
     void this.router.navigate(['/login']);
   }
 
