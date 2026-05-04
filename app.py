@@ -16,6 +16,7 @@ from auth import authenticate_user, decode_basic_auth, create_default_user, get_
 from models import get_db_session, User
 from rag_service import (
     get_cached_faiss,
+    invalidate_faiss_cache,
     new_session_id,
     persist_faiss_from_pdf_path,
     rag_retriever,

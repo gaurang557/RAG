@@ -1,1 +1,256 @@
-<p>home works!</p>
+<div class="workspace">
+
+  <!-- ─── HEADER ──────────────────────────────────────────────────── -->
+  <header class="header">
+    <div class="header-brand">
+      <div class="brand-icon">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v18m0 0h10a2 2 0 0 0 2-2V9M9 21H5a2 2 0 0 1-2-2V9m0 0h18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <span class="brand-name">RAGStudio</span>
+        <span class="brand-tag">Intelligent Document Q&amp;A</span>
+      </div>
+    </div>
+
+    <div class="header-right">
+      @if (session(); as s) {
+        <div class="session-status" [class.active]="s.indexed">
+          <span class="status-dot"></span>
+          <span>{{ s.indexed ? 'Document ready' : 'No document' }}</span>
+        </div>
+        <div class="divider-v"></div>
+        <div class="user-chip">
+          <div class="user-avatar">{{ userInitial }}</div>
+          <span class="user-name">{{ username }}</span>
+        </div>
+        <button
+          class="btn-icon-text"
+          (click)="createNewSession()"
+          [disabled]="sessionBusy()"
+          title="Clear session and start fresh"
+        >
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 0 0 4.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 0 1-15.357-2m15.357 2H15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          New Session
+        </button>
+      } @else if (sessionBusy()) {
+        <span class="text-muted">Connecting…</span>
+      }
+      <button class="btn-logout" (click)="logout()">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 0 1-3 3H6a3 3 0 0 1-3-3V7a3 3 0 0 1 3-3h4a3 3 0 0 1 3 3v1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Logout
+      </button>
+    </div>
+  </header>
+
+  <!-- ─── SESSION ERROR BANNER ─────────────────────────────────────── -->
+  @if (sessionError(); as se) {
+    <div class="global-error" aria-live="assertive">
+      <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      {{ se }}
+    </div>
+  }
+
+  <!-- ─── MAIN WORKSPACE ────────────────────────────────────────────── -->
+  <main class="workspace-main">
+
+    <!-- LEFT: UPLOAD PANEL -->
+    <section class="panel upload-panel">
+      <div class="panel-header">
+        <div class="panel-icon-wrap">
+          <svg class="panel-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M4 16v1a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <h2 class="panel-title">Upload Document</h2>
+          <p class="panel-subtitle">PDF only · Replaces current document</p>
+        </div>
+      </div>
+
+      <!-- Hidden file input -->
+      <input
+        #fileChooser
+        type="file"
+        accept=".pdf,application/pdf"
+        class="sr-only"
+        (change)="onFilePicked($event)"
+      />
+
+      <!-- Drop Zone -->
+      <div
+        class="drop-zone"
+        [class.has-file]="chosenFileMeta()"
+        [class.drag-over]="isDragging()"
+        (click)="triggerFileChooser()"
+        (dragover)="onDragOver($event)"
+        (dragleave)="onDragLeave()"
+        (drop)="onDrop($event)"
+        role="button"
+        tabindex="0"
+        [attr.aria-label]="chosenFileMeta() ? 'Change file' : 'Select PDF file'"
+      >
+        @if (chosenFileMeta(); as meta) {
+          <div class="drop-zone-content">
+            <svg class="dz-icon success" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="file-name">{{ meta.name }}</span>
+            <span class="file-size">{{ meta.size | number }} bytes</span>
+          </div>
+        } @else {
+          <div class="drop-zone-content">
+            <svg class="dz-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M7 16a4 4 0 0 1-.88-7.903A5 5 0 1 1 15.9 6L16 6a5 5 0 0 1 1 9.9M15 13l-3-3m0 0l-3 3m3-3v12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span class="dz-label">Drop PDF here or click to browse</span>
+            <span class="dz-hint">Uploads are indexed instantly</span>
+          </div>
+        }
+      </div>
+
+      <!-- Upload Actions -->
+      <div class="upload-actions">
+        @if (chosenFileMeta()) {
+          <button class="btn-ghost" (click)="clearChosenFile(); $event.stopPropagation()" [disabled]="uploadBusy()">
+            Clear
+          </button>
+        }
+        <button class="btn-primary" (click)="upload()" [disabled]="!chosenFileMeta() || uploadBusy()">
+          @if (uploadBusy()) {
+            <svg class="spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+            Indexing…
+          } @else {
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 16v1a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            Index Document
+          }
+        </button>
+      </div>
+
+      @if (uploadSuccess() || session()?.indexed) {
+        <div class="status-banner success">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M9 12l2 2 4-4m6 2a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Document indexed — ready for questions
+        </div>
+      }
+
+      @if (uploadError(); as ue) {
+        <div class="status-banner error">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          {{ ue }}
+        </div>
+      }
+
+      <!-- Session metadata -->
+      @if (session(); as s) {
+        <div class="session-meta">
+          <span class="meta-label">Session</span>
+          <code class="session-id" [title]="s.session_id">{{ shortenId(s.session_id) }}</code>
+        </div>
+      }
+    </section>
+
+    <!-- RIGHT: CHAT PANEL -->
+    <section class="panel chat-panel">
+      <div class="panel-header">
+        <div class="panel-icon-wrap">
+          <svg class="panel-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 0 1-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <div>
+          <h2 class="panel-title">Ask Questions</h2>
+          <p class="panel-subtitle">Based on your uploaded document</p>
+        </div>
+      </div>
+
+      <!-- Messages -->
+      <div class="chat-messages" #chatScroll aria-live="polite">
+        @if (chatHistory().length === 0 && !askBusy()) {
+          <div class="chat-empty">
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <p>Upload a document, then ask anything about it</p>
+          </div>
+        }
+
+        @for (msg of chatHistory(); track $index) {
+          <div class="message" [class.user-msg]="msg.type === 'user'" [class.ai-msg]="msg.type === 'ai'">
+            @if (msg.type === 'ai') {
+              <div class="ai-avatar" [class.error-avatar]="msg.isError">
+                @if (msg.isError) {
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+                  </svg>
+                } @else {
+                  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                }
+              </div>
+            }
+            <div class="bubble" [class.error-bubble]="msg.isError">
+              <p class="bubble-text">{{ msg.content }}</p>
+            </div>
+          </div>
+        }
+
+        @if (askBusy()) {
+          <div class="message ai-msg">
+            <div class="ai-avatar">
+              <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 1 1 7.072 0l-.548.547A3.374 3.374 0 0 0 14 18.469V19a2 2 0 1 1-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </div>
+            <div class="bubble typing">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+            </div>
+          </div>
+        }
+      </div>
+
+      <!-- Input Area -->
+      <div class="chat-footer">
+        <div class="chat-input-row">
+          <textarea
+            class="chat-input"
+            [(ngModel)]="question"
+            placeholder="Ask a question about your document… (Enter to send)"
+            [disabled]="askBusy()"
+            rows="1"
+            (keydown)="onEnterKey($event)"
+          ></textarea>
+          <button
+            class="btn-send"
+            (click)="ask()"
+            [disabled]="askBusy() || !question.trim()"
+            title="Send (Enter)"
+            aria-label="Send message"
+          >
+            <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+        <p class="input-hint">Enter to send · Shift+Enter for new line</p>
+      </div>
+    </section>
+
+  </main>
+</div>

@@ -11,14 +11,14 @@ import { AuthService } from '../auth.service';
   selector: 'app-login',
   imports: [CommonModule, FormsModule],
   templateUrl: './login.component.html',
-  styleUrl: '../auth.scss'
+  styleUrl: '../auth.scss',
 })
 export class LoginComponent {
   private readonly router = inject(Router);
   private readonly authService = inject(AuthService);
 
-  protected readonly username = '';
-  protected readonly password = '';
+  protected username = '';
+  protected password = '';
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);
 
@@ -33,7 +33,7 @@ export class LoginComponent {
       .pipe(finalize(() => this.busy.set(false)))
       .subscribe({
         next: () => {
-          void this.router.navigate(['/']);
+          void this.router.navigate(['/home']);
         },
         error: (e) => {
           this.error.set(httpErrorDetail(e));

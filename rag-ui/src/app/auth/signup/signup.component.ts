@@ -12,15 +12,15 @@ import { AuthService } from '../auth.service';
   imports: [CommonModule, FormsModule],
   templateUrl: './signup.component.html',
   standalone: true,
-  styleUrl: '../auth.scss'
+  styleUrl: '../auth.scss',
 })
 export class SignupComponent {
   private readonly router = inject(Router);
   private readonly authService = inject(AuthService);
 
-  protected readonly username = '';
-  protected readonly password = '';
-  protected readonly confirmPassword = '';
+  protected username = '';
+  protected password = '';
+  protected confirmPassword = '';
   protected readonly busy = signal(false);
   protected readonly error = signal<string | null>(null);
 
@@ -28,12 +28,12 @@ export class SignupComponent {
     if (this.busy()) return;
 
     if (this.password !== this.confirmPassword) {
-      this.error.set('Passwords do not match');
+      this.error.set('Passwords do not match.');
       return;
     }
 
     if (this.password.length < 6) {
-      this.error.set('Password must be at least 6 characters long');
+      this.error.set('Password must be at least 6 characters.');
       return;
     }
 
