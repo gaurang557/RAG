@@ -30,7 +30,7 @@ services:
       GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
       EMBED_MODEL: ${EMBED_MODEL:-all-MiniLM-L6-v2}
       VECTORSTORE_ROOT: /app/data/vectorstores
-      CORS_ALLOW_ORIGINS: http://localhost:4200
+      CORS_ALLOW_ORIGINS: http://localhost:3000
       RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-900}
       RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-180}
       RAG_TOP_K: ${RAG_TOP_K:-12}
@@ -47,10 +47,14 @@ services:
 
   frontend:
     build:
-      context: ./rag-ui
+      context: ./rag-web
       dockerfile: Dockerfile
+      # NEXT_PUBLIC_* values are baked in at build time. Leave empty so the browser
+      # auto-derives http://<hostname>:8000; set to a deployed API origin otherwise.
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
     ports:
-      - "4200:80"
+      - "3000:3000"
     depends_on:
       - backend
     restart: unless-stopped

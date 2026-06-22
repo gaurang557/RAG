@@ -4,7 +4,10 @@ WORKDIR /app
 
 # Install dependencies first (cached layer)
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install CPU-only torch first (avoids ~4 GB of CUDA/nvidia wheels), then the rest
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu \
+ && pip install --no-cache-dir -r requirements.txt
+
 
 # Pre-download the default embedding model so containers start without network calls.
 # Override EMBED_MODEL at build time via --build-arg if you use a different model.
