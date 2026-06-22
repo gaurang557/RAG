@@ -1,5 +1,7 @@
 import asyncio
 import os
+import subprocess
+import tempfile
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -44,12 +46,44 @@ def faiss_dir_for_session(session_id: str) -> Path:
     return VECTORSTORE_ROOT / session_id / "faiss"
 
 
+def _load_pdf_documents(path: Path) -> list:
+    """Load a PDF's text, falling back to OCR for scanned/image-only documents."""
+    documents = PyPDFLoader(str(path)).load()
+    if any(d.page_content.strip() for d in documents):
+        return documents
+
+    # No extractable text — likely a scanned/image-only PDF. Add a text layer via OCR.
+    ocr_path = _ocr_pdf(path)
+    if ocr_path is None:
+        return documents
+    return PyPDFLoader(str(ocr_path)).load()
+
+
+def _ocr_pdf(path: Path) -> Path | None:
+    """Run ocrmypdf to add a text layer. Returns the OCR'd path, or None on failure."""
+    out_path = Path(tempfile.gettempdir()) / f"ocr-{uuid.uuid4().hex}.pdf"
+    try:
+        subprocess.run(
+            ["ocrmypdf", "--force-ocr", "--quiet", str(path), str(out_path)],
+            check=True,
+            capture_output=True,
+        )
+        return out_path
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
 def persist_faiss_from_pdf_path(pdf_path: str | Path, session_id: str) -> Path:
     invalidate_faiss_cache(session_id)
     path = Path(pdf_path).resolve()
-    loader = PyPDFLoader(str(path))
-    documents = loader.load()
+    documents = _load_pdf_documents(path)
     docs = _text_splitter().split_documents(documents)
+
+    if not docs or all(not d.page_content.strip() for d in docs):
+        raise ValueError(
+            "No extractable text found in this PDF, even after OCR. The document "
+            "may be blank, corrupted, or too low-quality to read."
+        )
 
     VECTORSTORE_ROOT.mkdir(parents=True, exist_ok=True)
     out_dir = faiss_dir_for_session(session_id)

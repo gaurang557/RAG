@@ -2,6 +2,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# System packages required by ocrmypdf (OCR for scanned/image-only PDFs)
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends tesseract-ocr ghostscript \
+ && rm -rf /var/lib/apt/lists/*
+
 # Install dependencies first (cached layer)
 COPY requirements.txt .
 # Install CPU-only torch first (avoids ~4 GB of CUDA/nvidia wheels), then the rest

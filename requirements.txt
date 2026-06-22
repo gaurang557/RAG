@@ -10,6 +10,7 @@ langchain-core>=0.3.0
 faiss-cpu>=1.8.0
 sentence-transformers>=3.0.0
 pypdf>=5.0.0
+ocrmypdf>=16.0.0
 sqlalchemy>=2.0.0
 psycopg2-binary>=2.9.0
 passlib[bcrypt]>=1.7.0
