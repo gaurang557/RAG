@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+LLM_API_KEY = os.getenv("LLM_API_KEY")
+LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
 LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
 
 
@@ -37,13 +37,13 @@ def _fetch_available_models(base_url, headers):
 
 
 def call_grok(prompt: str) -> str:
-    if GROQ_API_KEY:
+    if LLM_API_KEY:
         provider_name = "Groq"
-        api_key = GROQ_API_KEY
-        model = GROQ_MODEL
+        api_key = LLM_API_KEY
+        model = LLM_MODEL
         base_url = "https://api.groq.com/openai/v1"
     else:
-        raise ValueError("Missing API key. Set GROQ_API_KEY in your .env file.")
+        raise ValueError("Missing API key. Set LLM_API_KEY in your .env file.")
 
     url = f"{base_url}/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -74,9 +74,9 @@ def call_grok(prompt: str) -> str:
         if "model not found" in error_text:
             available_models = _fetch_available_models(base_url, headers)
             hint = (
-                f" Set GROQ_MODEL in .env to one of: {', '.join(available_models)}"
+                f" Set LLM_MODEL in .env to one of: {', '.join(available_models)}"
                 if available_models
-                else f" Set GROQ_MODEL in .env to a valid model for your account."
+                else f" Set LLM_MODEL in .env to a valid model for your account."
             )
             raise RuntimeError(
                 f"{provider_name} model not found ({response.status_code}): {error_msg}.{hint}"

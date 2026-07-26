@@ -70,12 +70,12 @@ cp .env.example .env   # then edit .env
 
 ```env
 # Required
-GROQ_API_KEY=
+LLM_API_KEY=
 DATABASE_URL=postgresql://user:password@localhost/rag_db
 SESSION_SECRET_KEY=
 
 # Optional
-GROQ_MODEL=llama-3.1-8b-instant
+LLM_MODEL=llama-3.1-8b-instant
 EMBED_MODEL=all-MiniLM-L6-v2
 VECTORSTORE_ROOT=data/vectorstores
 RAG_CHUNK_SIZE=900

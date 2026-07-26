@@ -26,8 +26,8 @@ services:
     environment:
       DATABASE_URL: postgresql://raguser:ragpassword@postgres/rag_db
       SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:?SESSION_SECRET_KEY must be set in .env}
-      GROQ_API_KEY: ${GROQ_API_KEY:?GROQ_API_KEY must be set in .env}
-      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+      LLM_API_KEY: ${LLM_API_KEY:?LLM_API_KEY must be set in .env}
+      LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instant}
       EMBED_MODEL: ${EMBED_MODEL:-all-MiniLM-L6-v2}
       VECTORSTORE_ROOT: /app/data/vectorstores
       CORS_ALLOW_ORIGINS: http://localhost:3000
