@@ -1,29 +1,21 @@
-from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
+"""Small CLI for testing retrieval against an already indexed Neon document."""
+
+import argparse
+
 from ask import ask_question
-from rag_service import rag_retriever
+from rag_service import neon_retriever
 
-loader = PyPDFLoader("annualreport-page2-2025.pdf")
-documents = loader.load()
 
-text_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=900,
-    chunk_overlap=180,
-)
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("session_id", help="Document session UUID")
+    parser.add_argument("user_id", type=int, help="Owner's user ID")
+    parser.add_argument("question", help="Question to ask")
+    args = parser.parse_args()
 
-docs = text_splitter.split_documents(documents)
+    retriever = neon_retriever(args.session_id, args.user_id)
+    print(ask_question(args.question, retriever))
 
-print(len(docs))
 
-embeddings = HuggingFaceEmbeddings(
-    model_name="all-MiniLM-L6-v2"
-)
-
-vectorstore = FAISS.from_documents(docs, embeddings)
-
-query = "What was the net income in year 2025"
-
-retriever = rag_retriever(vectorstore)
-print(ask_question(query, retriever))
+if __name__ == "__main__":
+    main()

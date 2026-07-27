@@ -2,8 +2,8 @@ import asyncio
 import logging
 import os
 import re
-import shutil
 import tempfile
+import uuid
 from collections import OrderedDict
 from pathlib import Path
 
@@ -17,15 +17,12 @@ from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy.orm import Session
 
 from ask import ask_question
-from auth import authenticate_user, decode_basic_auth, create_default_user, get_password_hash
-from models import get_db_session, User
+from auth import authenticate_user, get_password_hash
+from models import get_db_session, RagDocument, User
 from rag_service import (
-    get_cached_faiss,
-    invalidate_faiss_cache,
+    neon_retriever,
     new_session_id,
-    persist_faiss_from_pdf_path,
-    rag_retriever,
-    faiss_dir_for_session,
+    persist_chunks_from_pdf_path,
 )
 
 load_dotenv()
@@ -42,7 +39,6 @@ if not SESSION_SECRET_KEY:
         "SESSION_SECRET_KEY missing; using insecure default — set SESSION_SECRET_KEY in production."
     )
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/rag_db")
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "50"))
 MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
 MAX_QUESTION_LEN = 2000
@@ -91,21 +87,38 @@ class _LRUCache:
 _query_cache = _LRUCache(_MAX_QUERY_CACHE)
 
 
-# ─── UPLOAD JOB TRACKER ────────────────────────────────────────────────────────
-# Maps session_id -> {"status": "pending"|"done"|"error", "message": str|None}
-
-_upload_jobs: dict[str, dict] = {}
-
-
-async def _ingest_pdf_bg(tmp_path: Path, sid: str) -> None:
-    loop = asyncio.get_event_loop()
+async def _ingest_pdf_bg(tmp_path: Path, sid: str, user_id: int) -> None:
+    loop = asyncio.get_running_loop()
     try:
-        await loop.run_in_executor(None, persist_faiss_from_pdf_path, tmp_path, sid)
-        _upload_jobs[sid] = {"status": "done", "message": None}
+        await loop.run_in_executor(
+            None,
+            persist_chunks_from_pdf_path,
+            tmp_path,
+            sid,
+            user_id,
+        )
         logger.info("Background ingest complete for session %s", sid)
     except Exception as e:
         logger.exception("Background ingest failed for session %s", sid)
-        _upload_jobs[sid] = {"status": "error", "message": f"Ingest failed: {e!s}"}
+        db = get_db_session()
+        try:
+            document = (
+                db.query(RagDocument)
+                .filter(
+                    RagDocument.session_id == uuid.UUID(sid),
+                    RagDocument.user_id == user_id,
+                )
+                .one_or_none()
+            )
+            if document is not None:
+                document.status = "error"
+                document.error_message = f"Ingest failed: {e!s}"[:1000]
+                db.commit()
+        except Exception:
+            db.rollback()
+            logger.exception("Failed to persist upload error for session %s", sid)
+        finally:
+            db.close()
     finally:
         try:
             tmp_path.unlink(missing_ok=True)
@@ -168,7 +181,7 @@ def ensure_session_id(session: dict) -> str:
 
 
 def get_db():
-    db = get_db_session(DATABASE_URL)
+    db = get_db_session()
     try:
         yield db
     finally:
@@ -220,16 +233,31 @@ async def signup(body: SignupBody, db: Session = Depends(get_db)):
 
 
 @app.get("/session")
-async def session_info(request: Request, current_user: User = Depends(get_current_user)):
+async def session_info(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     sid = ensure_session_id(request.session)
-    job = _upload_jobs.get(sid, {})
-    upload_status = job.get("status")
+    document = (
+        db.query(RagDocument)
+        .filter(
+            RagDocument.session_id == uuid.UUID(sid),
+            RagDocument.user_id == current_user.id,
+        )
+        .one_or_none()
+    )
+    upload_status = document.status if document is not None else None
     return {
         "session_id": sid,
         "authenticated": True,
         "indexed": upload_status == "done",
         "upload_pending": upload_status == "pending",
-        "upload_error": job.get("message") if upload_status == "error" else None,
+        "upload_error": (
+            document.error_message
+            if document is not None and upload_status == "error"
+            else None
+        ),
         "username": current_user.username,
     }
 
@@ -240,14 +268,24 @@ async def upload_pdf(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     sid = ensure_session_id(request.session)
+    sid_uuid = uuid.UUID(sid)
 
     fname = file.filename or ""
     if not fname.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF uploads are supported.")
 
-    if _upload_jobs.get(sid, {}).get("status") == "pending":
+    document = (
+        db.query(RagDocument)
+        .filter(
+            RagDocument.session_id == sid_uuid,
+            RagDocument.user_id == current_user.id,
+        )
+        .one_or_none()
+    )
+    if document is not None and document.status == "pending":
         raise HTTPException(
             status_code=409, detail="A document is already being processed. Please wait."
         )
@@ -267,11 +305,22 @@ async def upload_pdf(
         tmp_path = Path(tmp.name)
     tmp_path.write_bytes(content)
 
-    invalidate_faiss_cache(sid)
     _query_cache.clear_session(sid)
-    _upload_jobs[sid] = {"status": "pending", "message": None}
+    if document is None:
+        document = RagDocument(
+            session_id=sid_uuid,
+            user_id=current_user.id,
+            filename=fname,
+            status="pending",
+        )
+        db.add(document)
+    else:
+        document.filename = fname
+        document.status = "pending"
+        document.error_message = None
+    db.commit()
 
-    background_tasks.add_task(_ingest_pdf_bg, tmp_path, sid)
+    background_tasks.add_task(_ingest_pdf_bg, tmp_path, sid, current_user.id)
 
     return {
         "ok": True,
@@ -283,16 +332,33 @@ async def upload_pdf(
 
 
 @app.post("/ask")
-async def ask(request: Request, body: AskBody, current_user: User = Depends(get_current_user)):
+async def ask(
+    request: Request,
+    body: AskBody,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     sid = ensure_session_id(request.session)
-
-    job = _upload_jobs.get(sid, {})
-    upload_status = job.get("status")
+    document = (
+        db.query(RagDocument)
+        .filter(
+            RagDocument.session_id == uuid.UUID(sid),
+            RagDocument.user_id == current_user.id,
+        )
+        .one_or_none()
+    )
+    upload_status = document.status if document is not None else None
 
     if upload_status == "pending":
         raise HTTPException(status_code=409, detail="Document is still being processed. Please wait.")
 
-    if upload_status != "done":
+    if upload_status == "error":
+        raise HTTPException(
+            status_code=400,
+            detail=document.error_message or "Document processing failed.",
+        )
+
+    if document is None or upload_status != "done":
         raise HTTPException(
             status_code=400,
             detail="Upload a PDF first; embeddings will be computed at upload time.",
@@ -312,14 +378,7 @@ async def ask(request: Request, body: AskBody, current_user: User = Depends(get_
             "cached": True,
         }
 
-    vectorstore = get_cached_faiss(sid)
-    if vectorstore is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Indexed store not found for this session. Please upload the document again.",
-        )
-
-    retriever = rag_retriever(vectorstore)
+    retriever = neon_retriever(sid, current_user.id)
 
     try:
         answer = ask_question(sanitized_q, retriever)
@@ -344,16 +403,25 @@ async def ask(request: Request, body: AskBody, current_user: User = Depends(get_
 
 
 @app.post("/new-session")
-async def create_new_session(request: Request, current_user: User = Depends(get_current_user)):
+async def create_new_session(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     old_sid = request.session.get(SID_KEY)
     if old_sid:
-        invalidate_faiss_cache(old_sid)
         _query_cache.clear_session(old_sid)
-        _upload_jobs.pop(old_sid, None)
-
-        old_dir = faiss_dir_for_session(old_sid)
-        if old_dir.exists():
-            shutil.rmtree(old_dir, ignore_errors=True)
+        document = (
+            db.query(RagDocument)
+            .filter(
+                RagDocument.session_id == uuid.UUID(old_sid),
+                RagDocument.user_id == current_user.id,
+            )
+            .one_or_none()
+        )
+        if document is not None:
+            db.delete(document)
+            db.commit()
 
     request.session.clear()
     new_sid = new_session_id()

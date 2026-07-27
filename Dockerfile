@@ -22,9 +22,6 @@ RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTr
 # Copy application source
 COPY app.py ask.py auth.py llm.py models.py rag_service.py init_db.py ./
 
-# Persistent storage for per-session FAISS indices (mount a volume here in production)
-RUN mkdir -p data/vectorstores
-
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 

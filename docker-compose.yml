@@ -1,19 +1,5 @@
 services:
 
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: raguser
-      POSTGRES_PASSWORD: ragpassword
-      POSTGRES_DB: rag_db
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U raguser -d rag_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   backend:
     build:
       context: .
@@ -24,12 +10,11 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://raguser:ragpassword@postgres/rag_db
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set to your Neon connection string}
       SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:?SESSION_SECRET_KEY must be set in .env}
       LLM_API_KEY: ${LLM_API_KEY:?LLM_API_KEY must be set in .env}
       LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instant}
       EMBED_MODEL: ${EMBED_MODEL:-all-MiniLM-L6-v2}
-      VECTORSTORE_ROOT: /app/data/vectorstores
       CORS_ALLOW_ORIGINS: http://localhost:3000
       RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-900}
       RAG_CHUNK_OVERLAP: ${RAG_CHUNK_OVERLAP:-180}
@@ -38,11 +23,6 @@ services:
       MAX_QUERY_CACHE: ${MAX_QUERY_CACHE:-200}
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-30}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-    volumes:
-      - vectorstores:/app/data/vectorstores
-    depends_on:
-      postgres:
-        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -58,7 +38,3 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
-
-volumes:
-  postgres_data:
-  vectorstores:

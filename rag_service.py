@@ -1,4 +1,3 @@
-import asyncio
 import os
 import subprocess
 import tempfile
@@ -8,26 +7,18 @@ from pathlib import Path
 
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
+from langchain_core.documents import Document as LangChainDocument
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+from sqlalchemy import select
 
 from dotenv import load_dotenv
+from models import DocumentChunk, RagDocument, get_db_session
 
 load_dotenv()
-
-VECTORSTORE_ROOT = Path(os.getenv("VECTORSTORE_ROOT", "data/vectorstores"))
 
 EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "900"))
 CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "180"))
-
-_session_upload_locks: dict[str, asyncio.Lock] = {}
-
-
-def upload_lock(session_id: str) -> asyncio.Lock:
-    if session_id not in _session_upload_locks:
-        _session_upload_locks[session_id] = asyncio.Lock()
-    return _session_upload_locks[session_id]
 
 
 @lru_cache(maxsize=1)
@@ -40,10 +31,6 @@ def _text_splitter():
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
     )
-
-
-def faiss_dir_for_session(session_id: str) -> Path:
-    return VECTORSTORE_ROOT / session_id / "faiss"
 
 
 def _load_pdf_documents(path: Path) -> list:
@@ -73,70 +60,114 @@ def _ocr_pdf(path: Path) -> Path | None:
         return None
 
 
-def persist_faiss_from_pdf_path(pdf_path: str | Path, session_id: str) -> Path:
-    invalidate_faiss_cache(session_id)
+def persist_chunks_from_pdf_path(
+    pdf_path: str | Path,
+    session_id: str,
+    user_id: int,
+) -> None:
+    """Extract, embed, and atomically replace one session's chunks in Neon."""
     path = Path(pdf_path).resolve()
     documents = _load_pdf_documents(path)
-    docs = _text_splitter().split_documents(documents)
+    docs = [
+        doc
+        for doc in _text_splitter().split_documents(documents)
+        if doc.page_content.strip()
+    ]
 
-    if not docs or all(not d.page_content.strip() for d in docs):
+    if not docs:
         raise ValueError(
             "No extractable text found in this PDF, even after OCR. The document "
             "may be blank, corrupted, or too low-quality to read."
         )
 
-    VECTORSTORE_ROOT.mkdir(parents=True, exist_ok=True)
-    out_dir = faiss_dir_for_session(session_id)
-    if out_dir.exists():
-        # Clean previous partial run
-        for child in out_dir.iterdir():
-            if child.is_file():
-                child.unlink()
-    else:
-        out_dir.mkdir(parents=True)
+    texts = [doc.page_content.strip() for doc in docs]
+    vectors = get_embeddings().embed_documents(texts)
+    sid = uuid.UUID(session_id)
+    db = get_db_session()
 
-    embeddings = get_embeddings()
-    vectorstore = FAISS.from_documents(docs, embeddings)
-    vectorstore.save_local(str(out_dir))
-    _VECTOR_CACHE[session_id] = vectorstore
-    return out_dir
+    try:
+        document = (
+            db.query(RagDocument)
+            .filter(
+                RagDocument.session_id == sid,
+                RagDocument.user_id == user_id,
+            )
+            .one_or_none()
+        )
+        if document is None:
+            raise ValueError("Upload record no longer exists.")
+
+        db.query(DocumentChunk).filter(
+            DocumentChunk.document_id == document.id
+        ).delete(synchronize_session=False)
+
+        db.add_all(
+            [
+                DocumentChunk(
+                    document_id=document.id,
+                    chunk_index=index,
+                    page_number=doc.metadata.get("page"),
+                    content=text,
+                    embedding=vector,
+                )
+                for index, (doc, text, vector) in enumerate(
+                    zip(docs, texts, vectors)
+                )
+            ]
+        )
+        document.status = "done"
+        document.error_message = None
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
-def load_faiss(session_id: str) -> FAISS | None:
-    out_dir = faiss_dir_for_session(session_id)
-    if not out_dir.exists():
-        return None
-    embeddings = get_embeddings()
-    return FAISS.load_local(
-        str(out_dir),
-        embeddings,
-        allow_dangerous_deserialization=True,
-    )
+class NeonRetriever:
+    """LangChain-compatible retriever backed by a pgvector cosine query."""
+
+    def __init__(self, session_id: str, user_id: int, top_k: int) -> None:
+        self.session_id = uuid.UUID(session_id)
+        self.user_id = user_id
+        self.top_k = top_k
+
+    def invoke(self, query: str) -> list[LangChainDocument]:
+        query_vector = get_embeddings().embed_query(query)
+        distance = DocumentChunk.embedding.cosine_distance(query_vector)
+        statement = (
+            select(DocumentChunk)
+            .join(RagDocument, DocumentChunk.document_id == RagDocument.id)
+            .where(
+                RagDocument.session_id == self.session_id,
+                RagDocument.user_id == self.user_id,
+                RagDocument.status == "done",
+            )
+            .order_by(distance)
+            .limit(self.top_k)
+        )
+
+        db = get_db_session()
+        try:
+            chunks = db.execute(statement).scalars().all()
+            return [
+                LangChainDocument(
+                    page_content=chunk.content,
+                    metadata={
+                        "page": chunk.page_number,
+                        "chunk_index": chunk.chunk_index,
+                    },
+                )
+                for chunk in chunks
+            ]
+        finally:
+            db.close()
 
 
-_VECTOR_CACHE: dict[str, FAISS] = {}
-
-
-def get_cached_faiss(session_id: str) -> FAISS | None:
-    if session_id in _VECTOR_CACHE:
-        return _VECTOR_CACHE[session_id]
-    store = load_faiss(session_id)
-    if store is not None:
-        _VECTOR_CACHE[session_id] = store
-    return store
-
-
-def invalidate_faiss_cache(session_id: str) -> None:
-    _VECTOR_CACHE.pop(session_id, None)
-
-
-def rag_retriever(vectorstore: FAISS):
-    """Similarity retrieval; k is tunable via RAG_TOP_K (default richer than LangChain defaults)."""
-    k = max(1, int(os.getenv("RAG_TOP_K", "12")))
-    return vectorstore.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": k},
-    )
+def neon_retriever(session_id: str, user_id: int) -> NeonRetriever:
+    top_k = max(1, int(os.getenv("RAG_TOP_K", "12")))
+    return NeonRetriever(session_id=session_id, user_id=user_id, top_k=top_k)
 
 
 def new_session_id() -> str:

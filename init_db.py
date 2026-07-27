@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-import os
 from dotenv import load_dotenv
 from auth import create_default_user
-from models import get_db_session
+from models import get_db_session, init_schema
 
 load_dotenv()
 
+
 def init_database():
-    database_url = os.getenv("DATABASE_URL", "postgresql://user:password@localhost/rag_db")
-    print(f"Initializing database at: {database_url}")
-    
-    db = get_db_session(database_url)
+    print("Initializing database...")
+    init_schema()
+    db = get_db_session()
     try:
         # Create default admin user
         admin_user = create_default_user(db, username="admin", password="admin")
