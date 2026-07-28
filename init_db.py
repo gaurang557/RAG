@@ -8,13 +8,12 @@ load_dotenv()
 
 def init_database():
     print("Initializing database...")
-    init_schema()
-    db = get_db_session()
+    # db = get_db_session()
     try:
+        init_schema()
         # Create default admin user
-        admin_user = create_default_user(db, username="admin", password="admin")
-        print(f"Created/verified admin user: {admin_user.username}")
-        
+        # admin_user = create_default_user(db, username="admin", password="admin")
+        # print(f"Created/verified admin user: {admin_user.username}")
         print("Database initialization completed successfully!")
     except Exception as e:
         print(f"Error initializing database: {e}")

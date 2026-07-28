@@ -129,7 +129,8 @@ async def _ingest_pdf_bg(tmp_path: Path, sid: str, user_id: int) -> None:
 # ─── CORS ──────────────────────────────────────────────────────────────────────
 
 def _cors_settings() -> tuple[list[str], bool]:
-    raw = (os.getenv("CORS_ALLOW_ORIGINS") or "").strip()
+    raw = ((os.getenv("CORS_ALLOW_ORIGINS") if os.getenv("ENVIRONMENT")  == "Production" else "") or "").strip()
+    
     if raw == "*":
         return ["*"], False
     if raw:
@@ -156,7 +157,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.add_middleware(SessionMiddleware, secret_key=SESSION_SECRET_KEY, session_cookie="rag_session")
+app.add_middleware(
+    SessionMiddleware, 
+    secret_key=SESSION_SECRET_KEY,
+    session_cookie="rag_session",
+    https_only=True,
+    same_site="lax"
+)
 
 
 # ─── GLOBAL EXCEPTION HANDLER ──────────────────────────────────────────────────
