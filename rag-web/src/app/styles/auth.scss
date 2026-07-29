@@ -1,6 +1,7 @@
 // ─── AUTH PAGE SHELL ───────────────────────────────────────────────
 .auth-page {
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -9,6 +10,43 @@
     radial-gradient(ellipse 900px 600px at 15% -5%, rgba(99, 102, 241, 0.13) 0%, transparent 60%),
     radial-gradient(ellipse 700px 500px at 85% 105%, rgba(167, 139, 250, 0.09) 0%, transparent 55%),
     var(--bg);
+}
+
+@media (max-width: 520px) {
+  .auth-page {
+    align-items: flex-start;
+    padding:
+      max(24px, env(safe-area-inset-top))
+      16px
+      max(24px, env(safe-area-inset-bottom));
+  }
+
+  .auth-card {
+    margin: auto 0;
+    padding: 28px 20px;
+    border-radius: var(--radius-lg);
+  }
+
+  .auth-brand {
+    margin-bottom: 24px;
+  }
+
+  .auth-title {
+    font-size: 1.3rem;
+  }
+
+  .auth-subtitle {
+    margin-bottom: 24px;
+  }
+
+  .form-field input {
+    min-height: 46px;
+    font-size: 1rem;
+  }
+
+  .btn-submit {
+    min-height: 46px;
+  }
 }
 
 // ─── CARD ──────────────────────────────────────────────────────────

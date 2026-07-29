@@ -3,6 +3,7 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
   background: var(--bg);
 }
@@ -185,6 +186,10 @@
   }
 }
 
+.button-label {
+  white-space: nowrap;
+}
+
 .btn-logout {
   display: flex;
   align-items: center;
@@ -306,6 +311,12 @@
   cursor: pointer;
   transition: all 0.2s;
   background: rgba(255, 255, 255, 0.01);
+  outline: none;
+
+  &:focus-visible {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.14);
+  }
 
   &:hover {
     border-color: var(--accent);
@@ -956,29 +967,238 @@
 
 // ─── RESPONSIVE ────────────────────────────────────────────────────
 @media (max-width: 800px) {
+  .workspace {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .header {
+    height: auto;
+    min-height: 60px;
+    padding: 10px 16px;
+  }
+
   .workspace-main {
     grid-template-columns: 1fr;
     overflow-y: auto;
-    height: auto;
-  }
-
-  .workspace {
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
+    overscroll-behavior: contain;
   }
 
   .upload-panel {
     border-right: none;
     border-bottom: 1px solid var(--border);
+    overflow: visible;
   }
 
   .chat-panel {
-    min-height: 60vh;
+    min-height: min(680px, calc(100dvh - 60px));
   }
 
   .brand-tag,
   .user-name {
     display: none;
+  }
+
+  .panel {
+    padding: 20px;
+  }
+
+  .chat-panel {
+    padding: 0;
+  }
+
+  .chat-panel > .panel-header {
+    padding: 18px 20px 14px;
+  }
+
+  .chat-messages {
+    padding: 20px;
+  }
+
+  .chat-footer {
+    padding: 12px 20px max(10px, env(safe-area-inset-bottom));
+  }
+
+  .message {
+    max-width: 90%;
+  }
+
+  .btn-icon-text,
+  .btn-logout {
+    min-width: 42px;
+    min-height: 42px;
+    justify-content: center;
+    padding: 9px;
+  }
+}
+
+@media (max-width: 560px) {
+  .header {
+    align-items: flex-start;
+    gap: 8px;
+    padding:
+      max(8px, env(safe-area-inset-top))
+      12px
+      8px;
+  }
+
+  .header-brand {
+    gap: 9px;
+    min-width: 0;
+  }
+
+  .brand-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brand-name {
+    font-size: 0.98rem;
+  }
+
+  .header-right {
+    gap: 4px;
+  }
+
+  .session-status {
+    align-self: center;
+    padding: 5px 8px;
+    font-size: 0;
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+    }
+  }
+
+  .divider-v,
+  .user-chip,
+  .button-label {
+    display: none;
+  }
+
+  .panel {
+    gap: 16px;
+    padding: 18px 16px;
+  }
+
+  .chat-panel {
+    padding: 0;
+  }
+
+  .panel-header {
+    gap: 11px;
+  }
+
+  .panel-icon-wrap {
+    width: 36px;
+    height: 36px;
+  }
+
+  .drop-zone {
+    padding: 22px 14px;
+  }
+
+  .upload-actions {
+    align-items: stretch;
+  }
+
+  .btn-primary,
+  .btn-ghost {
+    min-height: 44px;
+  }
+
+  .session-meta {
+    min-width: 0;
+  }
+
+  .session-id {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .chat-panel > .panel-header {
+    padding: 16px;
+  }
+
+  .chat-messages {
+    padding: 16px 12px;
+    gap: 14px;
+  }
+
+  .chat-empty {
+    padding: 28px 20px;
+  }
+
+  .message {
+    max-width: 96%;
+    gap: 7px;
+  }
+
+  .ai-avatar {
+    width: 28px;
+    height: 28px;
+  }
+
+  .bubble {
+    padding: 10px 12px;
+  }
+
+  .bubble-text,
+  .bubble-markdown {
+    font-size: 0.88rem;
+  }
+
+  .chat-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 3;
+    padding: 10px 12px max(10px, env(safe-area-inset-bottom));
+  }
+
+  .chat-input {
+    min-height: 46px;
+    padding: 11px 12px;
+    font-size: 1rem;
+  }
+
+  .btn-send {
+    width: 46px;
+    height: 46px;
+  }
+
+  .input-hint {
+    display: none;
+  }
+
+  .input-footer-row:has(.char-count) {
+    justify-content: flex-end;
+  }
+
+  .global-error {
+    padding: 10px 14px;
+  }
+}
+
+@media (max-width: 360px) {
+  .brand-text {
+    display: none;
+  }
+
+  .header-right {
+    margin-left: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }

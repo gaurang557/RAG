@@ -403,7 +403,7 @@ export function HomeWorkspace() {
                     strokeLinejoin="round"
                   />
                 </svg>
-                New Session
+                <span className="button-label">New Session</span>
               </button>
             </>
           ) : sessionBusy ? (
@@ -419,7 +419,7 @@ export function HomeWorkspace() {
                 strokeLinejoin="round"
               />
             </svg>
-            Logout
+            <span className="button-label">Logout</span>
           </button>
         </div>
       </header>
@@ -484,6 +484,12 @@ export function HomeWorkspace() {
             onDragOver={onDragOver}
             onDragLeave={onDragLeave}
             onDrop={onDrop}
+            onKeyDown={(event) => {
+              if (!uploadDisabled && (event.key === "Enter" || event.key === " ")) {
+                event.preventDefault();
+                triggerFileChooser();
+              }
+            }}
             role="button"
             tabIndex={0}
             aria-label={chosenFileMeta ? "Change file" : "Select PDF file"}
