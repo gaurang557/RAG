@@ -30,6 +30,8 @@ LLM_TEMPERATURE = (
     float(_temperature_raw) if _temperature_raw not in (None, "") else None
 )
 
+print(LLM_API_KEY)
+print(LLM_MODEL)
 
 def _required(name: str, value: str | None) -> str:
     if value:
@@ -53,7 +55,7 @@ def _call_responses(prompt: str) -> str:
     request = {
         "model": _required("MODEL", LLM_MODEL),
         "input": [{"role": "user", "content": prompt}],
-        "max_output_tokens": LLM_MAX_TOKENS,
+        # "max_output_tokens": LLM_MAX_TOKENS,
         # Bedrock Mantle otherwise stores Responses API state for up to 30 days.
         "store": False,
     }

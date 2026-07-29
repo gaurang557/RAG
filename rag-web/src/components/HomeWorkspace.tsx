@@ -10,8 +10,10 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from "react";
+import rehypeKatex from "rehype-katex";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
 
 import { useAuth } from "@/context/AuthContext";
 import { api, type SessionInfo } from "@/lib/api";
@@ -24,18 +26,29 @@ interface ChatMessage {
   isError?: boolean;
 }
 
+function normalizeMathDelimiters(markdown: string): string {
+  return markdown
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math: string) => {
+      return `\n\n$$\n${math.trim()}\n$$\n\n`;
+    })
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, math: string) => {
+      return `$${math.trim()}$`;
+    });
+}
+
 function MarkdownAnswer({ content }: { content: string }) {
   return (
     <div className="bubble-markdown">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
         components={{
           a: ({ node: _node, ...props }) => (
             <a {...props} target="_blank" rel="noopener noreferrer" />
           ),
         }}
       >
-        {content}
+        {normalizeMathDelimiters(content)}
       </ReactMarkdown>
     </div>
   );
