@@ -11,7 +11,7 @@ RAGStudio lets you upload a PDF and ask natural-language questions about its con
 | Frontend | Next.js 15 + React 19 |
 | Backend | FastAPI (Python 3.12) |
 | Vector store | Neon PostgreSQL + pgvector with HuggingFace `all-MiniLM-L6-v2` embeddings |
-| LLM | Groq API (`llama-3.1-8b-instant` by default) |
+| LLM | Configurable OpenAI-compatible API (Amazon Bedrock Mantle by default) |
 | Auth | HTTP Basic Auth + bcrypt; session cookie via Starlette |
 | Database | PostgreSQL (SQLAlchemy) — stores user credentials |
 | PDF parsing | LangChain `PyPDFLoader` |
@@ -32,19 +32,19 @@ FastAPI (app.py)
   │     └── BackgroundTask: chunk → embed → pgvector (thread pool)
   ├── POST /ask             — sanitize query → cache lookup
   │     ├── LRU cache hit   → return cached answer
-  │     └── cache miss      → pgvector retrieval → Groq LLM → cache
+  │     └── cache miss      → pgvector retrieval → Amazon Bedrock → cache
   └── POST /new-session     — clear vectorstore + query cache
         │
         ├── rag_service.py  — PDF ingestion and pgvector retrieval
         ├── ask.py          — prompt construction + sanitization
-        └── llm.py          — Groq API call with timeout handling
+        └── llm.py          — Provider-neutral OpenAI-compatible LLM adapter
 ```
 
 **Data flow for a question:**
 1. Frontend sends `POST /ask { question }` with Basic Auth header
 2. Backend sanitizes input (strips control chars, enforces 2000-char limit)
 3. Checks in-memory LRU cache — returns instantly on hit
-4. On miss: retrieves top-K passages from pgvector, builds prompt, calls Groq
+4. On miss: retrieves top-K passages from pgvector, builds prompt, calls Bedrock
 5. Stores result in LRU cache; returns answer to client
 
 ---
@@ -56,7 +56,7 @@ FastAPI (app.py)
 - Python 3.12+
 - Node.js 20+ and npm
 - A Neon PostgreSQL database with the `vector` extension enabled
-- A [Groq API key](https://console.groq.com/)
+- An Amazon Bedrock API key, or credentials for another OpenAI-compatible provider
 
 ### 1. Clone and configure
 
@@ -70,12 +70,19 @@ cp .env.example .env   # then edit .env
 
 ```env
 # Required
-LLM_API_KEY=
 DATABASE_URL=postgresql://user:password@your-neon-host/rag_db?sslmode=require
 SESSION_SECRET_KEY=
 
+# Required LLM configuration (Amazon Bedrock Mantle example)
+LLM_API_KEY=your-bedrock-api-key
+LLM_BASE_URL=https://bedrock-mantle.ap-south-1.api.aws/v1
+LLM_MODEL=your-mantle-model-id
+
 # Optional
-LLM_MODEL=llama-3.1-8b-instant
+LLM_API_STYLE=responses
+LLM_MAX_TOKENS=1000
+LLM_TIMEOUT_SECONDS=30
+# LLM_TEMPERATURE=0.1
 EMBED_MODEL=all-MiniLM-L6-v2
 RAG_CHUNK_SIZE=900
 RAG_CHUNK_OVERLAP=180
@@ -86,6 +93,14 @@ LLM_TIMEOUT_SECONDS=30
 CORS_ALLOW_ORIGINS=http://localhost:4200
 LOG_LEVEL=INFO
 ```
+
+To change providers, update `LLM_API_KEY`, `LLM_BASE_URL`, and `LLM_MODEL`.
+No application code changes are required as long as the provider exposes an
+OpenAI-compatible API. Use `LLM_API_STYLE=chat_completions` for providers or
+models that do not support the Responses API.
+
+For production, store the Bedrock API key in AWS Secrets Manager or another
+secret store rather than committing it or baking it into the container image.
 
 ### 2. Backend
 
@@ -163,7 +178,7 @@ RAG/
 ├── app.py              # FastAPI routes, middleware, upload jobs, query cache
 ├── ask.py              # RAG prompt construction + query sanitization
 ├── auth.py             # bcrypt helpers, Basic Auth decoder
-├── llm.py              # Groq API client with timeout/connection error handling
+├── llm.py              # Configurable OpenAI-compatible LLM adapter
 ├── models.py           # SQLAlchemy User model
 ├── rag_service.py      # pgvector ingestion and similarity retrieval
 ├── init_db.py          # Database initialization script

@@ -13,7 +13,11 @@ services:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set to your Neon connection string}
       SESSION_SECRET_KEY: ${SESSION_SECRET_KEY:?SESSION_SECRET_KEY must be set in .env}
       LLM_API_KEY: ${LLM_API_KEY:?LLM_API_KEY must be set in .env}
-      LLM_MODEL: ${LLM_MODEL:-llama-3.1-8b-instant}
+      LLM_BASE_URL: ${LLM_BASE_URL:?LLM_BASE_URL must be set in .env}
+      LLM_MODEL: ${LLM_MODEL:?LLM_MODEL must be set in .env}
+      LLM_API_STYLE: ${LLM_API_STYLE:-responses}
+      LLM_MAX_TOKENS: ${LLM_MAX_TOKENS:-1000}
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-}
       EMBED_MODEL: ${EMBED_MODEL:-all-MiniLM-L6-v2}
       CORS_ALLOW_ORIGINS: http://localhost:3000
       RAG_CHUNK_SIZE: ${RAG_CHUNK_SIZE:-900}

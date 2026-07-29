@@ -1,104 +1,112 @@
 import os
+from functools import lru_cache
 
-import requests
 from dotenv import load_dotenv
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    OpenAI,
+)
 
 load_dotenv()
 
 LLM_API_KEY = os.getenv("LLM_API_KEY")
-LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
-LLM_TIMEOUT = int(os.getenv("LLM_TIMEOUT_SECONDS", "30"))
+LLM_BASE_URL = os.getenv("LLM_BASE_URL")
+LLM_MODEL = os.getenv("LLM_MODEL")
+LLM_API_STYLE = os.getenv("LLM_API_STYLE", "responses").strip().lower()
+LLM_MAX_TOKENS = int(
+    os.getenv("LLM_MAX_TOKENS")
+    or os.getenv("BEDROCK_MAX_TOKENS")
+    or "1000"
+)
+LLM_TIMEOUT = float(
+    os.getenv("LLM_TIMEOUT_SECONDS")
+    or os.getenv("LLM_TIMEOUT")
+    or "30"
+)
+_temperature_raw = os.getenv("LLM_TEMPERATURE")
+LLM_TEMPERATURE = (
+    float(_temperature_raw) if _temperature_raw not in (None, "") else None
+)
 
 
-def _extract_error_message(payload):
-    if isinstance(payload, dict):
-        error_obj = payload.get("error")
-        if isinstance(error_obj, dict):
-            return error_obj.get("message") or error_obj.get("error") or str(payload)
-        return payload.get("message") or str(payload)
-    return str(payload)
+def _required(name: str, value: str | None) -> str:
+    if value:
+        return value
+    raise RuntimeError(
+        f"Missing {name}. Configure it in your .env file."
+    )
 
 
-def _fetch_available_models(base_url, headers):
+@lru_cache(maxsize=1)
+def _client() -> OpenAI:
+    return OpenAI(
+        api_key=_required("API_KEY", LLM_API_KEY),
+        base_url=_required("BASE_URL", LLM_BASE_URL),
+        timeout=LLM_TIMEOUT,
+        max_retries=2,
+    )
+
+
+def _call_responses(prompt: str) -> str:
+    request = {
+        "model": _required("MODEL", LLM_MODEL),
+        "input": [{"role": "user", "content": prompt}],
+        "max_output_tokens": LLM_MAX_TOKENS,
+        # Bedrock Mantle otherwise stores Responses API state for up to 30 days.
+        "store": False,
+    }
+    if LLM_TEMPERATURE is not None:
+        request["temperature"] = LLM_TEMPERATURE
+
+    response = _client().responses.create(**request)
+    text = response.output_text.strip() if response.output_text else ""
+    if not text:
+        raise RuntimeError("The configured LLM returned no text.")
+    return text
+
+
+def _call_chat_completions(prompt: str) -> str:
+    request = {
+        "model": _required("MODEL", LLM_MODEL),
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": LLM_MAX_TOKENS,
+    }
+    if LLM_TEMPERATURE is not None:
+        request["temperature"] = LLM_TEMPERATURE
+
+    response = _client().chat.completions.create(**request)
+    if not response.choices:
+        raise RuntimeError("The configured LLM returned no choices.")
+
+    content = response.choices[0].message.content
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("The configured LLM returned no text.")
+    return content.strip()
+
+
+def call_llm(prompt: str) -> str:
+    """Call the configured provider through an OpenAI-compatible API."""
     try:
-        response = requests.get(f"{base_url}/models", headers=headers, timeout=15)
-        payload = response.json()
-    except Exception:
-        return []
-
-    if not isinstance(payload, dict):
-        return []
-
-    models = payload.get("data")
-    if not isinstance(models, list):
-        return []
-
-    return [m["id"] for m in models if isinstance(m, dict) and isinstance(m.get("id"), str)]
-
-
-def call_grok(prompt: str) -> str:
-    if LLM_API_KEY:
-        provider_name = "Groq"
-        api_key = LLM_API_KEY
-        model = LLM_MODEL
-        base_url = "https://api.groq.com/openai/v1"
-    else:
-        raise ValueError("Missing API key. Set LLM_API_KEY in your .env file.")
-
-    url = f"{base_url}/chat/completions"
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
-    data = {"model": model, "messages": [{"role": "user", "content": prompt}]}
-
-    try:
-        response = requests.post(url, headers=headers, json=data, timeout=LLM_TIMEOUT)
-    except requests.exceptions.Timeout:
-        raise TimeoutError(
-            f"{provider_name} API did not respond within {LLM_TIMEOUT} seconds. "
-            "Try again or check your network connection."
-        )
-    except requests.exceptions.ConnectionError as exc:
+        if LLM_API_STYLE == "responses":
+            return _call_responses(prompt)
+        if LLM_API_STYLE == "chat_completions":
+            return _call_chat_completions(prompt)
         raise RuntimeError(
-            f"Could not connect to {provider_name} API. "
-            "Check your network connection and try again."
+            "Unsupported LLM_API_STYLE. Use 'responses' or 'chat_completions'."
+        )
+    except APITimeoutError as exc:
+        raise TimeoutError(
+            f"The configured LLM did not respond within {LLM_TIMEOUT:g} seconds."
         ) from exc
-
-    try:
-        payload = response.json()
-    except ValueError:
-        response.raise_for_status()
-        raise RuntimeError(f"{provider_name} API returned a non-JSON response.")
-
-    if response.status_code >= 400:
-        error_msg = _extract_error_message(payload)
-        error_text = str(error_msg).lower()
-        if "model not found" in error_text:
-            available_models = _fetch_available_models(base_url, headers)
-            hint = (
-                f" Set LLM_MODEL in .env to one of: {', '.join(available_models)}"
-                if available_models
-                else f" Set LLM_MODEL in .env to a valid model for your account."
-            )
-            raise RuntimeError(
-                f"{provider_name} model not found ({response.status_code}): {error_msg}.{hint}"
-            )
-        raise RuntimeError(f"{provider_name} API error ({response.status_code}): {error_msg}")
-
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"Unexpected {provider_name} response type: {type(payload).__name__}")
-
-    choices = payload.get("choices")
-    if not choices:
-        raise RuntimeError(f"Unexpected {provider_name} response format: {payload}")
-
-    if not isinstance(choices[0], dict):
-        raise RuntimeError(f"Unexpected choice format in {provider_name} response.")
-
-    message = choices[0].get("message", {})
-    if not isinstance(message, dict):
-        raise RuntimeError(f"Unexpected message format in {provider_name} response.")
-
-    content = message.get("content")
-    if not content:
-        raise RuntimeError(f"{provider_name} response missing message content.")
-
-    return content
+    except APIConnectionError as exc:
+        raise RuntimeError(
+            f"Could not connect to the configured LLM endpoint: {LLM_BASE_URL}"
+        ) from exc
+    except APIStatusError as exc:
+        request_id = getattr(exc, "request_id", None)
+        request_hint = f", request ID {request_id}" if request_id else ""
+        raise RuntimeError(
+            f"LLM API error ({exc.status_code}{request_hint}): {exc.message}"
+        ) from exc
