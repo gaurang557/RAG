@@ -10,6 +10,8 @@ import {
   type DragEvent,
   type KeyboardEvent,
 } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { useAuth } from "@/context/AuthContext";
 import { api, type SessionInfo } from "@/lib/api";
@@ -20,6 +22,23 @@ interface ChatMessage {
   type: "user" | "ai";
   content: string;
   isError?: boolean;
+}
+
+function MarkdownAnswer({ content }: { content: string }) {
+  return (
+    <div className="bubble-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node: _node, ...props }) => (
+            <a {...props} target="_blank" rel="noopener noreferrer" />
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }
 
 const MAX_FILE_MB = 50;
@@ -660,7 +679,11 @@ export function HomeWorkspace() {
                   </div>
                 )}
                 <div className={`bubble${msg.isError ? " error-bubble" : ""}`}>
-                  <p className="bubble-text">{msg.content}</p>
+                  {msg.type === "ai" && !msg.isError ? (
+                    <MarkdownAnswer content={msg.content} />
+                  ) : (
+                    <p className="bubble-text">{msg.content}</p>
+                  )}
                 </div>
               </div>
             ))}
