@@ -5,7 +5,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from rag_api.models import User
+from models import User
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     # bcrypt has a 72 byte limit, truncate if necessary for consistency

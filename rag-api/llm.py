@@ -30,9 +30,6 @@ LLM_TEMPERATURE = (
     float(_temperature_raw) if _temperature_raw not in (None, "") else None
 )
 
-print(LLM_API_KEY)
-print(LLM_MODEL)
-
 def _required(name: str, value: str | None) -> str:
     if value:
         return value
