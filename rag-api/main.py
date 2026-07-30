@@ -2,8 +2,8 @@
 
 import argparse
 
-from ask import ask_question
-from rag_service import neon_retriever
+from rag_api.ask import ask_question
+from rag_api.rag_service import neon_retriever
 
 
 def main() -> None:

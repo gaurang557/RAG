@@ -16,10 +16,10 @@ from pydantic import BaseModel, Field
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy.orm import Session
 
-from ask import ask_question
-from auth import authenticate_user, get_password_hash
-from models import get_db_session, RagDocument, User
-from rag_service import (
+from rag_api.ask import ask_question
+from rag_api.auth import authenticate_user, get_password_hash
+from rag_api.models import get_db_session, RagDocument, User
+from rag_api.rag_service import (
     neon_retriever,
     new_session_id,
     persist_chunks_from_pdf_path,

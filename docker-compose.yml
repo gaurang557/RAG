@@ -2,7 +2,7 @@ services:
 
   backend:
     build:
-      context: .
+      context: ./rag-api
       dockerfile: Dockerfile
       # Pass a different model name at build time if you changed EMBED_MODEL in .env
       args:

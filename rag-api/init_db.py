@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 from dotenv import load_dotenv
-from auth import create_default_user
-from models import get_db_session, init_schema
+from rag_api.auth import create_default_user
+from rag_api.models import get_db_session, init_schema
 
 load_dotenv()
 

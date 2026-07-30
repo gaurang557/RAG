@@ -12,7 +12,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from sqlalchemy import select
 
 from dotenv import load_dotenv
-from models import DocumentChunk, RagDocument, get_db_session
+from rag_api.models import DocumentChunk, RagDocument, get_db_session
 
 load_dotenv()
 

@@ -1,6 +1,6 @@
 import re
 
-from llm import call_llm
+from rag_api.llm import call_llm
 
 _CONTROL_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 
