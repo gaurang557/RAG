@@ -1,12 +1,14 @@
 import os
 from functools import lru_cache
-
 from dotenv import load_dotenv
-from openai import (
-    APIConnectionError,
-    APIStatusError,
-    APITimeoutError,
-    OpenAI,
+
+import boto3
+from botocore.config import Config
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    ConnectTimeoutError,
+    ReadTimeoutError,
 )
 
 load_dotenv()
@@ -37,30 +39,40 @@ def _required(name: str, value: str | None) -> str:
         f"Missing {name}. Configure it in your .env file."
     )
 
-
 @lru_cache(maxsize=1)
-def _client() -> OpenAI:
-    return OpenAI(
-        api_key=_required("API_KEY", LLM_API_KEY),
-        base_url=_required("BASE_URL", LLM_BASE_URL),
-        timeout=LLM_TIMEOUT,
-        max_retries=2,
+def _client():
+    return boto3.client(
+        "bedrock-runtime",
+        region_name=os.getenv("AWS_REGION", "ap-south-1"),
+        config=Config(
+            connect_timeout=LLM_TIMEOUT,
+            read_timeout=LLM_TIMEOUT,
+            retries={"max_attempts": 3, "mode": "standard"},
+        ),
     )
 
-
-def _call_responses(prompt: str) -> str:
-    request = {
-        "model": _required("MODEL", LLM_MODEL),
-        "input": [{"role": "user", "content": prompt}],
-        # "max_output_tokens": LLM_MAX_TOKENS,
-        # Bedrock Mantle otherwise stores Responses API state for up to 30 days.
-        "store": False,
+def _call_bedrock(prompt: str) -> str:
+    inference_config = {
+        "maxTokens": LLM_MAX_TOKENS,
     }
     if LLM_TEMPERATURE is not None:
-        request["temperature"] = LLM_TEMPERATURE
-
-    response = _client().responses.create(**request)
-    text = response.output_text.strip() if response.output_text else ""
+        inference_config["temperature"] = LLM_TEMPERATURE
+    response = _client().converse(
+        modelId=_required("MODEL", LLM_MODEL),
+        messages=[
+            {
+                "role": "user",
+                "content": [{"text": prompt}],
+            }
+        ],
+        inferenceConfig=inference_config,
+    )
+    content = response["output"]["message"]["content"]
+    text = "".join(
+        block.get("text", "")
+        for block in content
+        if isinstance(block, dict)
+    ).strip()
     if not text:
         raise RuntimeError("The configured LLM returned no text.")
     return text
@@ -86,26 +98,24 @@ def _call_chat_completions(prompt: str) -> str:
 
 
 def call_llm(prompt: str) -> str:
-    """Call the configured provider through an OpenAI-compatible API."""
     try:
-        if LLM_API_STYLE == "responses":
-            return _call_responses(prompt)
-        if LLM_API_STYLE == "chat_completions":
-            return _call_chat_completions(prompt)
-        raise RuntimeError(
-            "Unsupported LLM_API_STYLE. Use 'responses' or 'chat_completions'."
-        )
-    except APITimeoutError as exc:
+        return _call_bedrock(prompt)
+
+    except (ConnectTimeoutError, ReadTimeoutError) as exc:
         raise TimeoutError(
-            f"The configured LLM did not respond within {LLM_TIMEOUT:g} seconds."
+            f"Bedrock did not respond within {LLM_TIMEOUT:g} seconds."
         ) from exc
-    except APIConnectionError as exc:
+
+    except ClientError as exc:
+        error = exc.response.get("Error", {})
+        code = error.get("Code", "Unknown")
+        message = error.get("Message", str(exc))
+
         raise RuntimeError(
-            f"Could not connect to the configured LLM endpoint: {LLM_BASE_URL}"
+            f"Bedrock API error ({code}): {message}"
         ) from exc
-    except APIStatusError as exc:
-        request_id = getattr(exc, "request_id", None)
-        request_hint = f", request ID {request_id}" if request_id else ""
+
+    except BotoCoreError as exc:
         raise RuntimeError(
-            f"LLM API error ({exc.status_code}{request_hint}): {exc.message}"
+            f"Could not communicate with Amazon Bedrock: {exc}"
         ) from exc
